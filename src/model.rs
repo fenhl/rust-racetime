@@ -35,6 +35,23 @@ pub enum Message {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct CategoryData {
+    pub name: String,
+    pub short_name: String,
+    pub slug: String,
+    pub url: String,
+    pub data_url: String,
+    pub image: Url,
+    pub info: String,
+    pub streaming_required: bool,
+    pub owners: Vec<UserData>,
+    pub moderators: Vec<UserData>,
+    pub goals: Vec<String>,
+    pub current_races: Vec<RaceSummary>,
+
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct CategorySummary {
     pub name: String,
     pub short_name: String,
@@ -167,6 +184,23 @@ pub enum RaceStatusValue {
     InProgress,
     Finished,
     Cancelled,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct RaceSummary {
+    pub name: String,
+    pub category: Option<CategorySummary>,
+    pub status: RaceStatus,
+    pub url: String,
+    pub data_url: String,
+    pub goal: Goal,
+    pub info: String,
+    pub entrants_count: u32,
+    pub entrants_count_finished: u32,
+    pub entrants_count_inactive: u32,
+    pub opened_at: String, //TODO DateTime<???>
+    pub started_at: Option<String>, //TODO Option<DateTime<???>>
+    pub time_limit: String, //TODO Duration
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]

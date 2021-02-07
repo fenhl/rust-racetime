@@ -30,7 +30,10 @@ use {
             RaceHandler,
             WsStream,
         },
-        model::RaceData,
+        model::{
+            CategoryData,
+            RaceData,
+        },
     },
 };
 
@@ -68,11 +71,6 @@ impl fmt::Display for Error {
 struct AuthResponse {
     access_token: String,
     expires_in: Option<u64>,
-}
-
-#[derive(Deserialize)]
-struct CategoryData {
-    current_races: Vec<RaceData>,
 }
 
 struct BotData {
