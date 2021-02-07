@@ -118,6 +118,7 @@ pub struct EntrantStatus {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum EntrantStatusValue {
     Requested,
     Invited,
