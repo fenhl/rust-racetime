@@ -102,7 +102,7 @@ pub struct Entrant {
     pub finished_at: Option<String>, //TODO Option<DateTime<???>>
     pub place: Option<u32>,
     pub place_ordinal: Option<String>,
-    pub score: u32,
+    pub score: Option<u32>,
     pub score_change: Option<i32>,
     pub comment: Option<String>,
     pub has_comment: bool,

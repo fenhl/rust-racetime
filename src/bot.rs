@@ -168,7 +168,7 @@ impl Bot {
             {
                 Ok(data) => data,
                 Err(e) => {
-                    eprintln!("Fatal error when attempting to retrieve race data: {:?}", e);
+                    eprintln!("Fatal error when attempting to retrieve category data: {:?}", e);
                     sleep(SCAN_RACES_EVERY).await;
                     continue
                 }
@@ -183,7 +183,7 @@ impl Bot {
                     {
                         Ok(race_data) => race_data,
                         Err(e) => {
-                            eprintln!("Fatal error when attempting to retrieve summary data: {:?}", e);
+                            eprintln!("Fatal error when attempting to retrieve data for race {}: {:?}", name, e);
                             sleep(SCAN_RACES_EVERY).await;
                             continue
                         }
