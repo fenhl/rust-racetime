@@ -19,6 +19,7 @@ use {
         json,
     },
     tokio::net::TcpStream,
+    tokio_native_tls::TlsStream,
     tokio_tungstenite::{
         WebSocketStream,
         tungstenite,
@@ -27,8 +28,8 @@ use {
     crate::model::*,
 };
 
-pub type WsStream = SplitStream<WebSocketStream<TcpStream>>;
-pub type WsSink = SplitSink<WebSocketStream<TcpStream>, tungstenite::Message>;
+pub type WsStream = SplitStream<WebSocketStream<tokio_tungstenite::stream::Stream<TcpStream, TlsStream<TcpStream>>>>;
+pub type WsSink = SplitSink<WebSocketStream<tokio_tungstenite::stream::Stream<TcpStream, TlsStream<TcpStream>>>, tungstenite::Message>;
 
 #[derive(Debug, From)]
 pub enum Error {
@@ -130,6 +131,7 @@ pub trait RaceHandler: Send + Sized + 'static {
             Message::Error { errors } => self.error(errors).await,
             Message::Pong => self.pong().await,
             Message::RaceData { race } => self.race_data(race).await,
+            Message::RaceRenders => self.race_renders().await,
         }
     }
 
@@ -149,7 +151,7 @@ pub trait RaceHandler: Send + Sized + 'static {
     ///
     /// The default implementation calls [`command`](RaceHandler::command) if appropriate.
     async fn chat_message(&mut self, message: ChatMessage) -> Result<(), Error> {
-        if !message.is_bot && !message.is_system && message.message.starts_with('!') {
+        if !message.is_bot && !message.is_system.unwrap_or(false /* Python duck typing strikes again */) && message.message.starts_with('!') {
             let can_monitor = match self.data() {
                 Ok(data) => message.user.as_ref().map_or(false, |sender|
                     data.opened_by.as_ref().map_or(false, |creator| creator.id == sender.id) || data.monitors.iter().any(|monitor| monitor.id == sender.id)
@@ -207,6 +209,12 @@ pub trait RaceHandler: Send + Sized + 'static {
         }
         Ok(())
     }
+
+    /// The default implementation of [`consume`](RaceHandler::consume) calls this when a `race.renders`
+    /// message is received.
+    ///
+    /// The default implementation does nothing.
+    async fn race_renders(&mut self) -> Result<(), Error> { Ok(()) }
 
     /// Send a chat message to the race room.
     ///
@@ -364,6 +372,7 @@ pub trait RaceHandler: Send + Sized + 'static {
                         return self.end().await
                     }
                 }
+                Ok(tungstenite::Message::Ping(payload)) => self.sender()?.send(tungstenite::Message::Pong(payload)).await?,
                 Ok(msg) => return Err(Error::UnexpectedMessageType(msg)),
                 Err(e) => return Err(Error::Connection(e)),
             }

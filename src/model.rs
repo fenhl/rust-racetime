@@ -32,6 +32,8 @@ pub enum Message {
     RaceData {
         race: RaceData,
     },
+    #[serde(rename = "race.renders")]
+    RaceRenders,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
@@ -79,7 +81,7 @@ pub struct ChatMessage {
     pub message_plain: String,
     pub highlight: bool,
     pub is_bot: bool,
-    pub is_system: bool,
+    pub is_system: Option<bool>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]

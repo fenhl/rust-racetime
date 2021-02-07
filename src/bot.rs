@@ -43,6 +43,7 @@ const SCAN_RACES_EVERY: Duration = Duration::from_secs(30);
 #[derive(Debug, From)]
 pub enum Error {
     Handler(handler::Error),
+    Http(http::Error),
     Io(io::Error),
     Reqwest(reqwest::Error),
     Task(JoinError),
@@ -54,6 +55,7 @@ impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Error::Handler(e) => write!(f, "error in race handler: {}", e),
+            Error::Http(e) => write!(f, "HTTP error: {}", e),
             Error::Io(e) => write!(f, "I/O error: {}", e),
             Error::Reqwest(e) => if let Some(url) = e.url() {
                 write!(f, "HTTP error at {}: {}", url, e)
@@ -123,15 +125,12 @@ impl Bot {
 
     /// Create a new WebSocket connection and set up a handler object to manage
     /// it.
-    async fn create_handler<H: RaceHandler>(&self, race_data: RaceData) -> Result<(H, WsStream), Error> {
+    async fn create_handler<H: RaceHandler>(&self, access_token: &str, race_data: RaceData) -> Result<(H, WsStream), Error> {
         let (ws_conn, _) = tokio_tungstenite::client_async_tls(
-            httparse::Request {
-                method: Some("GET"),
-                path: Some(&race_data.websocket_bot_url),
-                version: None,
-                headers: &mut [httparse::Header { name: "Authorization", value: format!("Bearer {}", self.data.lock().await.access_token).as_bytes() }],
-            },
-            TcpStream::connect(RACETIME_HOST).await?,
+            http::request::Request::get(&format!("wss://{}{}", RACETIME_HOST, race_data.websocket_bot_url))
+                .header(http::header::HeaderName::from_static("authorization"), format!("Bearer {}", access_token))
+                .body(())?,
+            TcpStream::connect((RACETIME_HOST, 443)).await?,
         ).await?;
         let (sink, stream) = ws_conn.split();
         Ok((H::new(race_data, sink)?, stream))
@@ -189,7 +188,7 @@ impl Bot {
                         }
                     };
                     if H::should_handle(&race_data)? {
-                        let (handler, stream) = self.create_handler::<H>(race_data).await?;
+                        let (handler, stream) = self.create_handler::<H>(&data.access_token, race_data).await?;
                         data.handled_races.insert(name.to_owned());
                         drop(data);
                         let name = name.to_owned();
