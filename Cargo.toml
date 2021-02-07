@@ -6,7 +6,7 @@ edition = "2018"
 description = "racetime.gg category bot library"
 repository = "https://github.com/fenhl/rust-racetime"
 license = "MIT"
-keywords = ["racetime.gg", "category", "bot", "chat"]
+keywords = ["gg", "racetimegg", "category", "bot", "chat"]
 categories = ["api-bindings"]
 
 [dependencies]
