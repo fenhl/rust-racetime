@@ -100,8 +100,8 @@ pub struct Entrant {
     pub status: EntrantStatus,
     pub finish_time: Option<String>, //TODO Option<Duration>
     pub finished_at: Option<String>, //TODO Option<DateTime<???>>
-    pub place: u32,
-    pub place_ordinal: String,
+    pub place: Option<u32>,
+    pub place_ordinal: Option<String>,
     pub score: u32,
     pub score_change: Option<i32>,
     pub comment: Option<String>,
@@ -161,7 +161,7 @@ pub struct RaceData {
     pub monitors: Vec<UserData>,
     pub recordable: bool,
     pub recorded: bool,
-    pub recorded_by: UserData,
+    pub recorded_by: Option<UserData>,
     pub allow_comments: bool,
     pub hide_comments: bool,
     pub allow_midrace_chat: bool,
