@@ -1,35 +1,28 @@
 use {
     std::{
-        collections::{
-            BTreeMap,
-            HashSet,
-        },
+        collections::HashSet,
         convert::Infallible as Never,
-        fmt,
-        io,
         sync::Arc,
         time::Duration,
     },
-    collect_mac::collect,
-    derive_more::From,
     futures::{
         future::TryFutureExt as _,
         stream::StreamExt as _,
     },
-    serde::Deserialize,
     tokio::{
         net::TcpStream,
         sync::Mutex,
-        task::JoinError,
         time::sleep,
     },
-    url::Url,
     crate::{
+        Error,
+        RACETIME_HOST,
+        authorize,
         handler::{
-            self,
             RaceHandler,
             WsStream,
         },
+        http_uri,
         model::{
             CategoryData,
             RaceData,
@@ -37,43 +30,7 @@ use {
     },
 };
 
-const RACETIME_HOST: &str = "racetime.gg";
 const SCAN_RACES_EVERY: Duration = Duration::from_secs(30);
-
-#[derive(Debug, From)]
-pub enum Error {
-    Handler(handler::Error),
-    Http(http::Error),
-    Io(io::Error),
-    Reqwest(reqwest::Error),
-    Task(JoinError),
-    Tungstenite(tokio_tungstenite::tungstenite::Error),
-    UrlParse(url::ParseError),
-}
-
-impl fmt::Display for Error {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Error::Handler(e) => write!(f, "error in race handler: {}", e),
-            Error::Http(e) => write!(f, "HTTP error: {}", e),
-            Error::Io(e) => write!(f, "I/O error: {}", e),
-            Error::Reqwest(e) => if let Some(url) = e.url() {
-                write!(f, "HTTP error at {}: {}", url, e)
-            } else {
-                write!(f, "HTTP error: {}", e)
-            },
-            Error::Task(e) => e.fmt(f),
-            Error::Tungstenite(e) => write!(f, "websocket error: {}", e),
-            Error::UrlParse(e) => e.fmt(f),
-        }
-    }
-}
-
-#[derive(Deserialize)]
-struct AuthResponse {
-    access_token: String,
-    expires_in: Option<u64>,
-}
 
 struct BotData {
     category_slug: String,
@@ -93,7 +50,7 @@ pub struct Bot {
 impl Bot {
     pub async fn new(category_slug: &str, client_id: &str, client_secret: &str) -> Result<Bot, Error> {
         let client = reqwest::Client::builder().user_agent(concat!("racetime-rs/", env!("CARGO_PKG_VERSION"))).build()?;
-        let (access_token, reauthorize_every) = Self::authorize(client_id, client_secret, &client).await?;
+        let (access_token, reauthorize_every) = authorize(client_id, client_secret, &client).await?;
         Ok(Bot {
             client,
             data: Arc::new(Mutex::new(BotData {
@@ -104,23 +61,6 @@ impl Bot {
                 client_secret: client_secret.to_owned(),
             })),
         })
-    }
-
-    /// Get an OAuth2 token from the authentication server.
-    async fn authorize(client_id: &str, client_secret: &str, client: &reqwest::Client) -> Result<(String, Duration), Error> {
-        let data = client.post(http_uri("/o/token")?)
-            .form(&collect![as BTreeMap<_, _>:
-                "client_id" => client_id,
-                "client_secret" => client_secret,
-                "grant_type" => "client_credentials",
-            ])
-            .send().await?
-            .error_for_status()?
-            .json::<AuthResponse>().await?;
-        Ok((
-            data.access_token,
-            Duration::from_secs(data.expires_in.unwrap_or(36000)),
-        ))
     }
 
     /// Create a new WebSocket connection and set up a handler object to manage
@@ -147,7 +87,7 @@ impl Bot {
             let delay = self.data.lock().await.reauthorize_every / 2;
             sleep(delay).await;
             let mut data = self.data.lock().await;
-            let (access_token, reauthorize_every) = Self::authorize(&data.client_id, &data.client_secret, &self.client).await?;
+            let (access_token, reauthorize_every) = authorize(&data.client_id, &data.client_secret, &self.client).await?;
             data.access_token = access_token;
             data.reauthorize_every = reauthorize_every;
         }
@@ -213,18 +153,4 @@ impl Bot {
             res = tokio::spawn(async move { refresh_races_clone.refresh_races::<H>().await }) => res?,
         }
     }
-}
-
-/// Generate a HTTP/HTTPS URI from the given URL path fragment.
-fn http_uri(url: &str) -> Result<Url, Error> {
-    uri("https", url)
-}
-
-/// Generate a URI from the given protocol and URL path fragment.
-fn uri(proto: &str, url: &str) -> Result<Url, Error> {
-    Ok(format!("{proto}://{host}{url}",
-        proto=proto,
-        host=RACETIME_HOST,
-        url=url,
-    ).parse()?)
 }

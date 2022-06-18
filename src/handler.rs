@@ -1,10 +1,5 @@
 use {
-    std::{
-        fmt,
-        io,
-    },
     async_trait::async_trait,
-    derive_more::From,
     futures::{
         SinkExt,
         stream::{
@@ -19,8 +14,8 @@ use {
         json,
     },
     tokio::net::TcpStream,
-    tokio_native_tls::TlsStream,
     tokio_tungstenite::{
+        MaybeTlsStream,
         WebSocketStream,
         tungstenite,
     },
@@ -28,36 +23,27 @@ use {
     crate::model::*,
 };
 
-pub type WsStream = SplitStream<WebSocketStream<tokio_tungstenite::stream::Stream<TcpStream, TlsStream<TcpStream>>>>;
-pub type WsSink = SplitSink<WebSocketStream<tokio_tungstenite::stream::Stream<TcpStream, TlsStream<TcpStream>>>, tungstenite::Message>;
+pub type WsStream = SplitStream<WebSocketStream<MaybeTlsStream<TcpStream>>>;
+pub type WsSink = SplitSink<WebSocketStream<MaybeTlsStream<TcpStream>>, tungstenite::Message>;
 
-#[derive(Debug, From)]
+#[derive(Debug, thiserror::Error)]
 pub enum Error {
-    Connection(tungstenite::Error),
+    #[error(transparent)] Io(#[from] std::io::Error),
+    #[error(transparent)] Json(#[from] serde_json::Error),
+    #[error("websocket error: {0}")]
+    Connection(#[from] tungstenite::Error),
+    #[error("this handler needs to implement `data` to be able to prepend/append to the race info")]
     DataUnimplemented,
+    #[error("websocket connection closed by the server")]
     EndOfStream,
-    Io(io::Error),
-    Json(serde_json::Error),
+    #[error("{0}")]
     Other(String),
+    #[error("this handler needs to implement `sender` to be able to send messages")]
     SenderUnimplemented,
+    #[error("server errors:{}", .0.into_iter().map(|msg| format!("\n• {msg}")).format(""))]
     Server(Vec<String>),
+    #[error("expected text message from websocket, but received {0:?}")]
     UnexpectedMessageType(tungstenite::Message),
-}
-
-impl fmt::Display for Error {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Error::Connection(e) => write!(f, "websocket error: {}", e),
-            Error::DataUnimplemented => write!(f, "this handler needs to implement `data` to be able to prepend/append to the race info"),
-            Error::EndOfStream => write!(f, "websocket connection closed by the server"),
-            Error::Io(e) => write!(f, "I/O error: {}", e),
-            Error::Json(e) => write!(f, "JSON error: {}", e),
-            Error::Other(msg) => msg.fmt(f),
-            Error::SenderUnimplemented => write!(f, "this handler needs to implement `sender` to be able to send messages"),
-            Error::Server(errors) => write!(f, "server errors:{}", errors.into_iter().map(|msg| format!("\n• {}", msg)).join("")),
-            Error::UnexpectedMessageType(msg) => write!(f, "expected text message from websocket, but received {:?}", msg),
-        }
-    }
 }
 
 #[async_trait]
