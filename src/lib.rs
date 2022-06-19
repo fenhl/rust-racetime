@@ -12,6 +12,7 @@ use {
     },
     collect_mac::collect,
     itertools::Itertools as _,
+    lazy_regex::regex_captures,
     serde::Deserialize,
     url::Url,
 };
@@ -28,6 +29,7 @@ const RACETIME_HOST: &str = "racetime.gg";
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
+    #[error(transparent)] HeaderToStr(#[from] reqwest::header::ToStrError),
     #[error(transparent)] InvalidHeaderValue(#[from] http::header::InvalidHeaderValue),
     #[error(transparent)] Io(#[from] std::io::Error),
     #[error(transparent)] Json(#[from] serde_json::Error),
@@ -35,6 +37,12 @@ pub enum Error {
     #[error(transparent)] UrlParse(#[from] url::ParseError),
     #[error("websocket connection closed by the server")]
     EndOfStream,
+    #[error("the startrace location did not match the input category")]
+    LocationCategory,
+    #[error("the startrace location header did not have the expected format")]
+    LocationFormat,
+    #[error("the startrace response did not include a location header")]
+    MissingLocationHeader,
     #[error("HTTP error{}: {0}", if let Some(url) = .0.url() { format!(" at {url}") } else { String::default() })]
     Reqwest(#[from] reqwest::Error),
     #[error("server errors:{}", .0.into_iter().map(|msg| format!("\n• {msg}")).format(""))]
@@ -101,7 +109,10 @@ pub struct StartRace {
 }
 
 impl StartRace {
-    pub async fn start(&self, access_token: &str, client: &reqwest::Client, category: &str) -> Result<(), Error> {
+    /// Creates a race room with the specified configuration and returns its slug.
+    ///
+    /// An access token can be obtained using [`authorize`].
+    pub async fn start(&self, access_token: &str, client: &reqwest::Client, category: &str) -> Result<String, Error> {
         fn form_bool(value: bool) -> &'static str { if value { "1" } else { "0" } }
 
         let start_delay = self.start_delay.to_string();
@@ -129,11 +140,17 @@ impl StartRace {
         if let Some(streaming_required) = self.streaming_required {
             form.insert("streaming_required", form_bool(streaming_required));
         }
-        client.post(http_uri(&format!("/o/{category}/startrace"))?)
+        let response = client.post(http_uri(&format!("/o/{category}/startrace"))?)
             .bearer_auth(access_token)
             .form(&form)
             .send().await?
             .error_for_status()?;
-        Ok(())
+        let location = response
+            .headers()
+            .get("location").ok_or(Error::MissingLocationHeader)?
+            .to_str()?;
+        let (_, location_category, slug) = regex_captures!("^/([^/]+)/([^/]+)$", location).ok_or(Error::LocationFormat)?;
+        if location_category != category { return Err(Error::LocationCategory) }
+        Ok(slug.to_owned())
     }
 }
