@@ -11,6 +11,7 @@ use {
         time::Duration,
     },
     collect_mac::collect,
+    itertools::Itertools as _,
     serde::Deserialize,
     url::Url,
 };
@@ -29,14 +30,19 @@ const RACETIME_HOST: &str = "racetime.gg";
 pub enum Error {
     #[error(transparent)] InvalidHeaderValue(#[from] http::header::InvalidHeaderValue),
     #[error(transparent)] Io(#[from] std::io::Error),
+    #[error(transparent)] Json(#[from] serde_json::Error),
     #[error(transparent)] Task(#[from] tokio::task::JoinError),
     #[error(transparent)] UrlParse(#[from] url::ParseError),
-    #[error("error in race handler: {0}")]
-    Handler(#[from] handler::Error),
+    #[error("websocket connection closed by the server")]
+    EndOfStream,
     #[error("HTTP error{}: {0}", if let Some(url) = .0.url() { format!(" at {url}") } else { String::default() })]
     Reqwest(#[from] reqwest::Error),
+    #[error("server errors:{}", .0.into_iter().map(|msg| format!("\n• {msg}")).format(""))]
+    Server(Vec<String>),
     #[error("WebSocket error: {0}")]
     Tungstenite(#[from] tokio_tungstenite::tungstenite::Error),
+    #[error("expected text message from websocket, but received {0:?}")]
+    UnexpectedMessageType(tokio_tungstenite::tungstenite::Message),
 }
 
 /// Generate a HTTP/HTTPS URI from the given URL path fragment.

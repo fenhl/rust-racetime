@@ -2,32 +2,38 @@ use {
     std::{
         collections::HashSet,
         convert::Infallible as Never,
+        mem,
         sync::Arc,
         time::Duration,
     },
     futures::{
+        SinkExt as _,
         future::TryFutureExt as _,
         stream::StreamExt as _,
     },
     tokio::{
         net::TcpStream,
-        sync::Mutex,
+        sync::{
+            Mutex,
+            RwLock,
+        },
         time::sleep,
     },
-    tokio_tungstenite::tungstenite::client::IntoClientRequest as _,
+    tokio_tungstenite::tungstenite::{
+        self,
+        client::IntoClientRequest as _,
+    },
     crate::{
         Error,
         RACETIME_HOST,
         authorize,
         handler::{
+            RaceContext,
             RaceHandler,
             WsStream,
         },
         http_uri,
-        model::{
-            CategoryData,
-            RaceData,
-        },
+        model::*,
     },
 };
 
@@ -64,14 +70,37 @@ impl Bot {
         })
     }
 
-    /// Create a new WebSocket connection and set up a handler object to manage
-    /// it.
-    async fn create_handler<H: RaceHandler>(&self, access_token: &str, race_data: RaceData) -> Result<(H, WsStream), Error> {
-        let mut request = format!("wss://{RACETIME_HOST}{}", race_data.websocket_bot_url).into_client_request()?;
-        request.headers_mut().append(http::header::HeaderName::from_static("authorization"), format!("Bearer {access_token}").parse()?);
-        let (ws_conn, _) = tokio_tungstenite::client_async_tls(request, TcpStream::connect((RACETIME_HOST, 443)).await?).await?;
-        let (sink, stream) = ws_conn.split();
-        Ok((H::new(race_data, sink)?, stream))
+    /// Low-level handler for the race room. Loops over the websocket,
+    /// calling the appropriate method for each message that comes in.
+    async fn handle<H: RaceHandler>(mut stream: WsStream, ctx: RaceContext) -> Result<(), Error> {
+        let mut handler = H::new(&ctx).await?;
+        while let Some(msg_res) = stream.next().await {
+            match msg_res {
+                Ok(tungstenite::Message::Text(buf)) => {
+                    let data = serde_json::from_str(&buf)?;
+                    match data {
+                        Message::ChatHistory { messages } => handler.chat_history(&ctx, messages).await?,
+                        Message::ChatMessage { message } => handler.chat_message(&ctx, message).await?,
+                        Message::ChatDelete { delete } => handler.chat_delete(&ctx, delete).await?,
+                        Message::ChatPurge { purge } => handler.chat_purge(&ctx, purge).await?,
+                        Message::Error { errors } => handler.error(&ctx, errors).await?,
+                        Message::Pong => handler.pong(&ctx).await?,
+                        Message::RaceData { race } => {
+                            let old_race_data = mem::replace(&mut *ctx.data.write().await, race);
+                            handler.race_data(&ctx, old_race_data).await?;
+                        }
+                        Message::RaceRenders => handler.race_renders(&ctx).await?,
+                    }
+                    if handler.should_stop(&ctx).await? {
+                        return handler.end(&ctx).await
+                    }
+                }
+                Ok(tungstenite::Message::Ping(payload)) => ctx.sender.lock().await.send(tungstenite::Message::Pong(payload)).await?,
+                Ok(msg) => return Err(Error::UnexpectedMessageType(msg)),
+                Err(e) => return Err(e.into()),
+            }
+        }
+        Err(Error::EndOfStream)
     }
 
     /// Reauthorize with the token endpoint, to generate a new access token
@@ -126,13 +155,20 @@ impl Bot {
                         }
                     };
                     if H::should_handle(&race_data)? {
-                        let (handler, stream) = self.create_handler::<H>(&data.access_token, race_data).await?;
+                        let mut request = format!("wss://{RACETIME_HOST}{}", race_data.websocket_bot_url).into_client_request()?;
+                        request.headers_mut().append(http::header::HeaderName::from_static("authorization"), format!("Bearer {}", data.access_token).parse()?);
+                        let (ws_conn, _) = tokio_tungstenite::client_async_tls(request, TcpStream::connect((RACETIME_HOST, 443)).await?).await?;
                         data.handled_races.insert(name.to_owned());
                         drop(data);
+                        let (sink, stream) = ws_conn.split();
+                        let ctx = RaceContext {
+                            data: Arc::new(RwLock::new(race_data)),
+                            sender: Arc::new(Mutex::new(sink)),
+                        };
                         let name = name.to_owned();
-                        let data_clone = self.data.clone();
+                        let data_clone = Arc::clone(&self.data);
                         tokio::spawn(async move {
-                            handler.handle(stream).await.expect("error in race handler");
+                            Self::handle::<H>(stream, ctx).await.expect("error in race handler");
                             data_clone.lock().await.handled_races.remove(&name);
                         });
                     }

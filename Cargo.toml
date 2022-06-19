@@ -29,7 +29,7 @@ features = ["derive"]
 
 [dependencies.tokio]
 version = "1"
-features = ["macros", "net", "rt", "time"]
+features = ["macros", "net", "rt", "sync", "time"]
 
 [dependencies.tokio-tungstenite]
 version = "0.17"
