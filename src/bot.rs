@@ -14,6 +14,7 @@ use {
         sync::Mutex,
         time::sleep,
     },
+    tokio_tungstenite::tungstenite::client::IntoClientRequest as _,
     crate::{
         Error,
         RACETIME_HOST,
@@ -66,12 +67,9 @@ impl Bot {
     /// Create a new WebSocket connection and set up a handler object to manage
     /// it.
     async fn create_handler<H: RaceHandler>(&self, access_token: &str, race_data: RaceData) -> Result<(H, WsStream), Error> {
-        let (ws_conn, _) = tokio_tungstenite::client_async_tls(
-            http::request::Request::get(&format!("wss://{}{}", RACETIME_HOST, race_data.websocket_bot_url))
-                .header(http::header::HeaderName::from_static("authorization"), format!("Bearer {}", access_token))
-                .body(())?,
-            TcpStream::connect((RACETIME_HOST, 443)).await?,
-        ).await?;
+        let mut request = format!("wss://{RACETIME_HOST}{}", race_data.websocket_bot_url).into_client_request()?;
+        request.headers_mut().append(http::header::HeaderName::from_static("authorization"), format!("Bearer {access_token}").parse()?);
+        let (ws_conn, _) = tokio_tungstenite::client_async_tls(request, TcpStream::connect((RACETIME_HOST, 443)).await?).await?;
         let (sink, stream) = ws_conn.split();
         Ok((H::new(race_data, sink)?, stream))
     }

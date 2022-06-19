@@ -27,7 +27,7 @@ const RACETIME_HOST: &str = "racetime.gg";
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
-    #[error(transparent)] Http(#[from] http::Error),
+    #[error(transparent)] InvalidHeaderValue(#[from] http::header::InvalidHeaderValue),
     #[error(transparent)] Io(#[from] std::io::Error),
     #[error(transparent)] Task(#[from] tokio::task::JoinError),
     #[error(transparent)] UrlParse(#[from] url::ParseError),
