@@ -1,4 +1,6 @@
-//! This is a [Rust](https://rust-lang.org/) library to help you create chat bots for [racetime.gg](https://racetime.gg/).
+//! Utilities for creating chat bots for [racetime.gg](https://racetime.gg/).
+//!
+//! The main entry point is [`Bot::run`]. You can also create new race rooms using [`StartRace::start`].
 //!
 //! For documentation, see also <https://github.com/racetimeGG/racetime-app/wiki/Category-bots>.
 

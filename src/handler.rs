@@ -17,6 +17,7 @@ use {
         sync::{
             Mutex,
             RwLock,
+            RwLockReadGuard,
         },
     },
     tokio_tungstenite::{
@@ -37,11 +38,16 @@ pub type WsSink = SplitSink<WebSocketStream<MaybeTlsStream<TcpStream>>, tungsten
 /// A type passed to [`RaceHandler`] callback methods which can be used to check the current status of the race or send messages.
 #[derive(Clone)]
 pub struct RaceContext {
-    pub data: Arc<RwLock<RaceData>>,
+    pub(crate) data: Arc<RwLock<RaceData>>,
     pub sender: Arc<Mutex<WsSink>>,
 }
 
 impl RaceContext {
+    /// Returns the current state of the race.
+    pub async fn data(&self) -> RwLockReadGuard<'_, RaceData> {
+        self.data.read().await
+    }
+
     /// Sends a raw JSON message to the server.
     ///
     /// The methods [`set_raceinfo`](RaceContext::set_raceinfo) through [`remove_monitor`](RaceContext::remove_monitor) should be preferred.
@@ -68,7 +74,7 @@ impl RaceContext {
     ///
     /// `info` should be the information you wish to set, and `pos` the behavior in case there is existing info.
     pub async fn set_raceinfo(&self, info: &str, pos: RaceInfoPos) -> Result<(), Error> {
-        let info = match (&*self.data.read().await.info, pos) {
+        let info = match (&*self.data().await.info, pos) {
             ("", _) | (_, RaceInfoPos::Overwrite) => info.to_owned(),
             (old_info, RaceInfoPos::Prefix) => format!("{info} | {old_info}"),
             (old_info, RaceInfoPos::Suffix) => format!("{old_info} | {info}"),
@@ -233,7 +239,7 @@ pub trait RaceHandler: Send + Sized + 'static {
     ///
     /// The default implementation checks [`should_handle`](RaceHandler::should_handle).
     async fn should_stop(&mut self, ctx: &RaceContext) -> Result<bool, Error> {
-        Ok(!Self::should_handle(&*ctx.data.read().await)?)
+        Ok(!Self::should_handle(&*ctx.data().await)?)
     }
 
     /// Bot actions to perform just before disconnecting from a race room.
@@ -269,7 +275,7 @@ pub trait RaceHandler: Send + Sized + 'static {
     /// The default implementation calls [`command`](RaceHandler::command) if appropriate.
     async fn chat_message(&mut self, ctx: &RaceContext, message: ChatMessage) -> Result<(), Error> {
         if !message.is_bot && !message.is_system.unwrap_or(false /* Python duck typing strikes again */) && message.message.starts_with('!') {
-            let data = ctx.data.read().await;
+            let data = ctx.data().await;
             let can_monitor = message.user.as_ref().map_or(false, |sender|
                 data.opened_by.as_ref().map_or(false, |creator| creator.id == sender.id) || data.monitors.iter().any(|monitor| monitor.id == sender.id)
             );
