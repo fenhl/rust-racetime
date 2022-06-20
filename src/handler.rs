@@ -191,6 +191,7 @@ impl RaceContext {
     }
 }
 
+/// This trait should be implemented using the [`async_trait`] attribute.
 #[async_trait]
 pub trait RaceHandler: Send + Sized + 'static {
     /// Called when a new race room is found. If this returns [`false`], that race is ignored entirely.
@@ -202,16 +203,33 @@ pub trait RaceHandler: Send + Sized + 'static {
 
     /// Called when a new race room is found and [`should_handle`](RaceHandler::should_handle) has returned [`true`].
     ///
+    /// Equivalent to:
+    ///
+    /// ```ignore
+    /// async fn new(ctx: &RaceContext) -> Result<Self, Error>;
+    /// ```
+    ///
     /// The `RaceHandler` this returns will receive events for that race.
     async fn new(ctx: &RaceContext) -> Result<Self, Error>;
 
     /// Called for each chat message that starts with `!` and was not sent by the system or a bot.
-    async fn command(&mut self, _ctx: &RaceContext, _cmd_name: &str, _args: Vec<&str>, _is_moderator: bool, _is_monitor: bool, _: &ChatMessage) -> Result<(), Error> {
+    ///
+    /// Equivalent to:
+    ///
+    /// ```ignore
+    /// async fn command(&mut self: _ctx: &RaceContext, _cmd_name: &str, _args: Vec<&str>, _is_moderator: bool, _is_monitor: bool, _msg: &ChatMessage) -> Result<(), Error>;
+    /// ```
+    async fn command(&mut self, _ctx: &RaceContext, _cmd_name: &str, _args: Vec<&str>, _is_moderator: bool, _is_monitor: bool, _msg: &ChatMessage) -> Result<(), Error> {
         Ok(())
     }
 
-    /// Determine if the handler should be terminated. This is checked after
-    /// every receieved message.
+    /// Determine if the handler should be terminated. This is checked after every receieved message.
+    ///
+    /// Equivalent to:
+    ///
+    /// ```ignore
+    /// async fn should_stop(&mut self, ctx: &RaceContext) -> Result<bool, Error>;
+    /// ```
     ///
     /// The default implementation checks [`should_handle`](RaceHandler::should_handle).
     async fn should_stop(&mut self, ctx: &RaceContext) -> Result<bool, Error> {
@@ -220,15 +238,33 @@ pub trait RaceHandler: Send + Sized + 'static {
 
     /// Bot actions to perform just before disconnecting from a race room.
     ///
+    /// Equivalent to:
+    ///
+    /// ```ignore
+    /// async fn end(self, _ctx: &RaceContext) -> Result<(), Error>;
+    /// ```
+    ///
     /// The default implementation does nothing.
     async fn end(self, _ctx: &RaceContext) -> Result<(), Error> { Ok(()) }
 
     /// Called when a `chat.history` message is received.
     ///
+    /// Equivalent to:
+    ///
+    /// ```ignore
+    /// async fn chat_history(&mut self, _ctx: &RaceContext: _msgs: Vec<ChatMessage>) -> Result<(), Error>;
+    /// ```
+    ///
     /// The default implementation does nothing.
-    async fn chat_history(&mut self, _ctx: &RaceContext, _: Vec<ChatMessage>) -> Result<(), Error> { Ok(()) }
+    async fn chat_history(&mut self, _ctx: &RaceContext, _msgs: Vec<ChatMessage>) -> Result<(), Error> { Ok(()) }
 
     /// Called when a `chat.message` message is received.
+    ///
+    /// Equivalent to:
+    ///
+    /// ```ignore
+    /// async fn chat_message(&mut self, ctx: &RaceContext, message: ChatMessage) -> Result<(), Error>;
+    /// ```
     ///
     /// The default implementation calls [`command`](RaceHandler::command) if appropriate.
     async fn chat_message(&mut self, ctx: &RaceContext, message: ChatMessage) -> Result<(), Error> {
@@ -252,15 +288,33 @@ pub trait RaceHandler: Send + Sized + 'static {
 
     /// Called when a `chat.delete` message is received.
     ///
+    /// Equivalent to:
+    ///
+    /// ```ignore
+    /// async fn chat_delete(&mut self, _ctx: &RaceContext, _event: ChatDelete) -> Result<(), Error>;
+    /// ```
+    ///
     /// The default implementation does nothing.
-    async fn chat_delete(&mut self, _ctx: &RaceContext, _: ChatDelete) -> Result<(), Error> { Ok(()) }
+    async fn chat_delete(&mut self, _ctx: &RaceContext, _event: ChatDelete) -> Result<(), Error> { Ok(()) }
 
     /// Called when a `chat.purge` message is received.
     ///
+    /// Equivalent to:
+    ///
+    /// ```ignore
+    /// async fn chat_purge(&mut self, _ctx: &RaceContext, _event: ChatPurge) -> Result<(), Error>;
+    /// ```
+    ///
     /// The default implementation does nothing.
-    async fn chat_purge(&mut self, _ctx: &RaceContext, _: ChatPurge) -> Result<(), Error> { Ok(()) }
+    async fn chat_purge(&mut self, _ctx: &RaceContext, _event: ChatPurge) -> Result<(), Error> { Ok(()) }
 
     /// Called when an `error` message is received.
+    ///
+    /// Equivalent to:
+    ///
+    /// ```ignore
+    /// async fn error(&mut self, _ctx: &RaceContext, errors: Vec<String>) -> Result<(), Error>;
+    /// ```
     ///
     /// The default implementation returns the errors as `Error::Server`.
     async fn error(&mut self, _ctx: &RaceContext, errors: Vec<String>) -> Result<(), Error> {
@@ -269,10 +323,22 @@ pub trait RaceHandler: Send + Sized + 'static {
 
     /// Called when a `pong` message is received.
     ///
+    /// Equivalent to:
+    ///
+    /// ```ignore
+    /// async fn pong(&mut self, _ctx: &RaceContext) -> Result<(), Error>;
+    /// ```
+    ///
     /// The default implementation does nothing.
     async fn pong(&mut self, _ctx: &RaceContext) -> Result<(), Error> { Ok(()) }
 
     /// Called when a `race.data` message is received.
+    ///
+    /// Equivalent to:
+    ///
+    /// ```ignore
+    /// async fn race_data(&mut self, _ctx: &RaceContext, _old_race_data: RaceData) -> Result<(), Error>;
+    /// ```
     ///
     /// The new race data can be found in the [`RaceContext`] parameter. The [`RaceData`] parameter contains the previous data.
     ///
@@ -280,6 +346,12 @@ pub trait RaceHandler: Send + Sized + 'static {
     async fn race_data(&mut self, _ctx: &RaceContext, _old_race_data: RaceData) -> Result<(), Error> { Ok(()) }
 
     /// Called when a `race.renders` message is received.
+    ///
+    /// Equivalent to:
+    ///
+    /// ```ignore
+    /// async fn race_renders(&mut self, _ctx: &RaceContext) -> Result<(), Error>;
+    /// ```
     ///
     /// The default implementation does nothing.
     async fn race_renders(&mut self, _ctx: &RaceContext) -> Result<(), Error> { Ok(()) }
