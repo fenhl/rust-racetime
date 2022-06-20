@@ -98,7 +98,9 @@ pub struct StartRace {
     pub info_user: String,
     pub info_bot: String,
     pub require_even_teams: bool,
+    /// Number of seconds the countdown should run for. Must be in `10..=60`.
     pub start_delay: u8,
+    /// Maximum number of hours the race is allowed to run for. Must be in `1..=72`.
     pub time_limit: u8,
     pub time_limit_auto_complete: bool,
     pub streaming_required: Option<bool>,
@@ -108,6 +110,7 @@ pub struct StartRace {
     pub allow_prerace_chat: bool,
     pub allow_midrace_chat: bool,
     pub allow_non_entrant_chat: bool,
+    /// Number of seconds to hold a message for before displaying it. Doesn't affect race monitors or moderators. Must be in `0..=90`.
     pub chat_message_delay: u8,
 }
 

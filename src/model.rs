@@ -1,5 +1,17 @@
 use {
-    serde::Deserialize,
+    chrono::{
+        Duration,
+        prelude::*,
+    },
+    lazy_regex::regex_captures,
+    serde::{
+        Deserialize,
+        de::{
+            Deserializer,
+            Error as _,
+            Unexpected,
+        },
+    },
     url::Url,
 };
 
@@ -76,7 +88,7 @@ pub struct ChatMessage {
     pub id: String,
     pub user: Option<UserData>,
     pub bot: Option<String>,
-    pub posted_at: String, //TODO DateTime<???>
+    pub posted_at: DateTime<Utc>,
     pub message: String,
     pub message_plain: String,
     pub highlight: bool,
@@ -100,8 +112,9 @@ pub struct Goal {
 pub struct Entrant {
     pub user: UserData,
     pub status: EntrantStatus,
-    pub finish_time: Option<String>, //TODO Option<Duration>
-    pub finished_at: Option<String>, //TODO Option<DateTime<???>>
+    #[serde(deserialize_with = "deserialize_opt_django_duration")]
+    pub finish_time: Option<Duration>,
+    pub finished_at: Option<DateTime<Utc>>,
     pub place: Option<u32>,
     pub place_ordinal: Option<String>,
     pub score: Option<u32>,
@@ -150,13 +163,15 @@ pub struct RaceData {
     pub entrants_count_finished: u32,
     pub entrants_count_inactive: u32,
     pub entrants: Vec<Entrant>,
-    pub opened_at: String, //TODO DateTime<???>
-    pub start_delay: String, //TODO Duration
-    pub started_at: Option<String>, //TODO Option<DateTime<???>>
-    pub ended_at: Option<String>, //TODO Option<DateTime<???>>
-    pub cancelled_at: Option<String>, //TODO Option<DateTime<???>>
+    pub opened_at: DateTime<Utc>,
+    #[serde(deserialize_with = "deserialize_django_duration")]
+    pub start_delay: Duration,
+    pub started_at: Option<DateTime<Utc>>,
+    pub ended_at: Option<DateTime<Utc>>,
+    pub cancelled_at: Option<DateTime<Utc>>,
     pub unlisted: bool,
-    pub time_limit: String, //TODO Duration
+    #[serde(deserialize_with = "deserialize_django_duration")]
+    pub time_limit: Duration,
     pub streaming_required: bool,
     pub auto_start: bool,
     pub opened_by: Option<UserData>,
@@ -168,7 +183,8 @@ pub struct RaceData {
     pub hide_comments: bool,
     pub allow_midrace_chat: bool,
     pub allow_non_entrant_chat: bool,
-    pub chat_message_delay: String, //TODO Duration
+    #[serde(deserialize_with = "deserialize_django_duration")]
+    pub chat_message_delay: Duration,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
@@ -201,9 +217,10 @@ pub struct RaceSummary {
     pub entrants_count: u32,
     pub entrants_count_finished: u32,
     pub entrants_count_inactive: u32,
-    pub opened_at: String, //TODO DateTime<???>
-    pub started_at: Option<String>, //TODO Option<DateTime<???>>
-    pub time_limit: String, //TODO Duration
+    pub opened_at: DateTime<Utc>,
+    pub started_at: Option<DateTime<Utc>>,
+    #[serde(deserialize_with = "deserialize_django_duration")]
+    pub time_limit: Duration,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
@@ -219,4 +236,35 @@ pub struct UserData {
     pub twitch_name: Option<String>,
     pub twitch_channel: Option<Url>,
     pub can_moderate: bool,
+}
+
+fn deserialize_django_duration<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Duration, D::Error> {
+    let s = String::deserialize(deserializer)?;
+    if let Some((_, sign, days, hours, minutes, seconds, ms)) = regex_captures!("^(-?)P([0-9]+)DT([0-9]+)H([0-9]+)M([0-9]+)(?:\\.([0-9]+))?S$", &s) {
+        Ok((Duration::days(days.parse().map_err(D::Error::custom)?)
+        + Duration::hours(hours.parse().map_err(D::Error::custom)?)
+        + Duration::minutes(minutes.parse().map_err(D::Error::custom)?)
+        + Duration::seconds(seconds.parse().map_err(D::Error::custom)?)
+        + Duration::microseconds(if ms.is_empty() { 0 } else { ms.parse().map_err(D::Error::custom)? }))
+        * if sign == "-" { -1 } else { 1 })
+    } else {
+        Err(D::Error::invalid_value(Unexpected::Str(&s), &"a duration as produced by Django"))
+    }
+}
+
+fn deserialize_opt_django_duration<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Option<Duration>, D::Error> {
+    if let Some(s) = Option::<String>::deserialize(deserializer)? {
+        if let Some((_, sign, days, hours, minutes, seconds, ms)) = regex_captures!("^(-?)P([0-9]+)DT([0-9]+)H([0-9]+)M([0-9]+)(?:\\.([0-9]+))?S$", &s) {
+            Ok(Some((Duration::days(days.parse().map_err(D::Error::custom)?)
+            + Duration::hours(hours.parse().map_err(D::Error::custom)?)
+            + Duration::minutes(minutes.parse().map_err(D::Error::custom)?)
+            + Duration::seconds(seconds.parse().map_err(D::Error::custom)?)
+            + Duration::microseconds(if ms.is_empty() { 0 } else { ms.parse().map_err(D::Error::custom)? }))
+            * if sign == "-" { -1 } else { 1 }))
+        } else {
+            Err(D::Error::invalid_value(Unexpected::Str(&s), &"a duration as produced by Django"))
+        }
+    } else {
+        Ok(None)
+    }
 }
