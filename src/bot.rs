@@ -8,7 +8,11 @@ use {
     },
     futures::{
         SinkExt as _,
-        future::TryFutureExt as _,
+        future::{
+            self,
+            Future,
+            TryFutureExt as _,
+        },
         stream::StreamExt as _,
     },
     tokio::{
@@ -17,7 +21,11 @@ use {
             Mutex,
             RwLock,
         },
-        time::sleep,
+        time::{
+            MissedTickBehavior,
+            interval,
+            sleep,
+        },
     },
     tokio_tungstenite::tungstenite::{
         self,
@@ -103,88 +111,77 @@ impl Bot {
         Err(Error::EndOfStream)
     }
 
-    /// Reauthorize with the token endpoint, to generate a new access token
-    /// before the current one expires.
-    ///
-    /// This method runs in a constant loop, creating a new access token when
-    /// needed.
-    async fn reauthorize(&self) -> Result<Never, Error> {
-        loop {
-            // Divide the reauthorization interval by 2 to avoid token expiration
-            let delay = self.data.lock().await.reauthorize_every / 2;
-            sleep(delay).await;
-            let mut data = self.data.lock().await;
-            let (access_token, reauthorize_every) = authorize(&data.client_id, &data.client_secret, &self.client).await?;
-            data.access_token = access_token;
-            data.reauthorize_every = reauthorize_every;
-        }
+    /// Run the bot. Requires an active [`tokio`] runtime.
+    pub async fn run<H: RaceHandler>(&self) -> Result<Never, Error> {
+        self.run_until::<H, _, _>(future::pending()).await
     }
 
-    /// Retrieve current race information from the category detail API
-    /// endpoint, retrieving the current race list. Creates a handler and task
-    /// for any race that should be handled but currently isn't.
-    ///
-    /// This method runs in a constant loop, checking for new races every few
-    /// seconds.
-    async fn refresh_races<H: RaceHandler>(&self) -> Result<Never, Error> {
+    /// Run the bot until the `shutdown` future resolves. Requires an active [`tokio`] runtime. `shutdown` must be cancel safe.
+    pub async fn run_until<H: RaceHandler, T, Fut: Future<Output = T>>(&self, shutdown: Fut) -> Result<T, Error> {
+        tokio::pin!(shutdown);
+        // Divide the reauthorization interval by 2 to avoid token expiration
+        let mut reauthorize = interval(self.data.lock().await.reauthorize_every / 2);
+        let mut refresh_races = interval(SCAN_RACES_EVERY);
+        refresh_races.set_missed_tick_behavior(MissedTickBehavior::Delay);
         loop {
-            let data = match async { http_uri(&format!("/{}/data", self.data.lock().await.category_slug)) }
-                .and_then(|url| async { Ok(self.client.get(url).send().await?.error_for_status()?.json::<CategoryData>().await?) })
-                .await
-            {
-                Ok(data) => data,
-                Err(e) => {
-                    eprintln!("Fatal error when attempting to retrieve category data: {:?}", e);
-                    sleep(SCAN_RACES_EVERY).await;
-                    continue
+            tokio::select! {
+                output = &mut shutdown => return Ok(output), //TODO shut down running handlers
+                _ = reauthorize.tick() => {
+                    let mut data = self.data.lock().await;
+                    let (access_token, reauthorize_every) = authorize(&data.client_id, &data.client_secret, &self.client).await?;
+                    data.access_token = access_token;
+                    data.reauthorize_every = reauthorize_every;
+                    reauthorize = interval(reauthorize_every / 2);
                 }
-            };
-            for summary_data in data.current_races {
-                let name = &summary_data.name;
-                let mut data = self.data.lock().await;
-                if !data.handled_races.contains(name) {
-                    let race_data = match async { http_uri(&summary_data.data_url) }
-                        .and_then(|url| async { Ok(self.client.get(url).send().await?.error_for_status()?.json().await?) })
+                _ = refresh_races.tick() => {
+                    let data = match async { http_uri(&format!("/{}/data", self.data.lock().await.category_slug)) }
+                        .and_then(|url| async { Ok(self.client.get(url).send().await?.error_for_status()?.json::<CategoryData>().await?) })
                         .await
                     {
-                        Ok(race_data) => race_data,
+                        Ok(data) => data,
                         Err(e) => {
-                            eprintln!("Fatal error when attempting to retrieve data for race {}: {:?}", name, e);
+                            eprintln!("Fatal error when attempting to retrieve category data: {:?}", e);
                             sleep(SCAN_RACES_EVERY).await;
                             continue
                         }
                     };
-                    if H::should_handle(&race_data)? {
-                        let mut request = format!("wss://{RACETIME_HOST}{}", race_data.websocket_bot_url).into_client_request()?;
-                        request.headers_mut().append(http::header::HeaderName::from_static("authorization"), format!("Bearer {}", data.access_token).parse()?);
-                        let (ws_conn, _) = tokio_tungstenite::client_async_tls(request, TcpStream::connect((RACETIME_HOST, 443)).await?).await?;
-                        data.handled_races.insert(name.to_owned());
-                        drop(data);
-                        let (sink, stream) = ws_conn.split();
-                        let ctx = RaceContext {
-                            data: Arc::new(RwLock::new(race_data)),
-                            sender: Arc::new(Mutex::new(sink)),
-                        };
-                        let name = name.to_owned();
-                        let data_clone = Arc::clone(&self.data);
-                        tokio::spawn(async move {
-                            Self::handle::<H>(stream, ctx).await.expect("error in race handler");
-                            data_clone.lock().await.handled_races.remove(&name);
-                        });
+                    for summary_data in data.current_races {
+                        let name = &summary_data.name;
+                        let mut data = self.data.lock().await;
+                        if !data.handled_races.contains(name) {
+                            let race_data = match async { http_uri(&summary_data.data_url) }
+                                .and_then(|url| async { Ok(self.client.get(url).send().await?.error_for_status()?.json().await?) })
+                                .await
+                            {
+                                Ok(race_data) => race_data,
+                                Err(e) => {
+                                    eprintln!("Fatal error when attempting to retrieve data for race {}: {:?}", name, e);
+                                    sleep(SCAN_RACES_EVERY).await;
+                                    continue
+                                }
+                            };
+                            if H::should_handle(&race_data)? {
+                                let mut request = format!("wss://{RACETIME_HOST}{}", race_data.websocket_bot_url).into_client_request()?;
+                                request.headers_mut().append(http::header::HeaderName::from_static("authorization"), format!("Bearer {}", data.access_token).parse()?);
+                                let (ws_conn, _) = tokio_tungstenite::client_async_tls(request, TcpStream::connect((RACETIME_HOST, 443)).await?).await?;
+                                data.handled_races.insert(name.to_owned());
+                                drop(data);
+                                let (sink, stream) = ws_conn.split();
+                                let ctx = RaceContext {
+                                    data: Arc::new(RwLock::new(race_data)),
+                                    sender: Arc::new(Mutex::new(sink)),
+                                };
+                                let name = name.to_owned();
+                                let data_clone = Arc::clone(&self.data);
+                                tokio::spawn(async move {
+                                    Self::handle::<H>(stream, ctx).await.expect("error in race handler");
+                                    data_clone.lock().await.handled_races.remove(&name);
+                                });
+                            }
+                        }
                     }
                 }
             }
-            sleep(SCAN_RACES_EVERY).await;
-        }
-    }
-
-    /// Run the bot. Requires an active [`tokio`] runtime.
-    pub async fn run<H: RaceHandler>(&self) -> Result<Never, Error> {
-        let reauthorize_clone = self.clone();
-        let refresh_races_clone = self.clone();
-        tokio::select! {
-            res = tokio::spawn(async move { reauthorize_clone.reauthorize().await }) => res?,
-            res = tokio::spawn(async move { refresh_races_clone.refresh_races::<H>().await }) => res?,
         }
     }
 }
