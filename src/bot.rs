@@ -128,10 +128,21 @@ impl Bot {
                 output = &mut shutdown => return Ok(output), //TODO shut down running handlers
                 _ = reauthorize.tick() => {
                     let mut data = self.data.lock().await;
-                    let (access_token, reauthorize_every) = authorize(&data.client_id, &data.client_secret, &self.client).await?;
-                    data.access_token = access_token;
-                    data.reauthorize_every = reauthorize_every;
-                    reauthorize = interval(reauthorize_every / 2);
+                    match authorize(&data.client_id, &data.client_secret, &self.client).await {
+                        Ok((access_token, reauthorize_every)) => {
+                            data.access_token = access_token;
+                            data.reauthorize_every = reauthorize_every;
+                            reauthorize = interval(reauthorize_every / 2);
+                        }
+                        Err(Error::Reqwest(e)) if e.status().map_or(false, |status| status.is_server_error()) => {
+                            // racetime.gg's auth endpoint has been known to return server errors intermittently.
+                            // In that case, we retry again after half the remaining lifetime of the current token, until that would exceed the rate limit.
+                            let reauthorize_every = reauthorize.period() / 2;
+                            if reauthorize_every < SCAN_RACES_EVERY { return Err(Error::Reqwest(e)) }
+                            reauthorize = interval(reauthorize_every);
+                        }
+                        Err(e) => return Err(e),
+                    }
                 }
                 _ = refresh_races.tick() => {
                     let data = match async { http_uri(&format!("/{}/data", self.data.lock().await.category_slug)) }
