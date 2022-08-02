@@ -57,17 +57,17 @@ struct BotData {
 }
 
 #[derive(Clone)]
-pub struct Bot {
+pub struct Bot<S: Send + Sync + ?Sized + 'static> {
     client: reqwest::Client,
     data: Arc<Mutex<BotData>>,
+    state: Arc<S>,
 }
 
-impl Bot {
-    pub async fn new(category_slug: &str, client_id: &str, client_secret: &str) -> Result<Bot, Error> {
+impl<S: Send + Sync + ?Sized + 'static> Bot<S> {
+    pub async fn new(category_slug: &str, client_id: &str, client_secret: &str, state: Arc<S>) -> Result<Self, Error> {
         let client = reqwest::Client::builder().user_agent(concat!("racetime-rs/", env!("CARGO_PKG_VERSION"))).build()?;
         let (access_token, reauthorize_every) = authorize(client_id, client_secret, &client).await?;
         Ok(Bot {
-            client,
             data: Arc::new(Mutex::new(BotData {
                 access_token, reauthorize_every,
                 handled_races: HashSet::default(),
@@ -75,13 +75,14 @@ impl Bot {
                 client_id: client_id.to_owned(),
                 client_secret: client_secret.to_owned(),
             })),
+            client, state,
         })
     }
 
     /// Low-level handler for the race room. Loops over the websocket,
     /// calling the appropriate method for each message that comes in.
-    async fn handle<H: RaceHandler>(mut stream: WsStream, ctx: RaceContext) -> Result<(), Error> {
-        let mut handler = H::new(&ctx).await?;
+    async fn handle<H: RaceHandler<S>>(mut stream: WsStream, ctx: RaceContext, state: Arc<S>) -> Result<(), Error> {
+        let mut handler = H::new(&ctx, state).await?;
         while let Some(msg_res) = stream.next().await {
             match msg_res {
                 Ok(tungstenite::Message::Text(buf)) => {
@@ -112,12 +113,12 @@ impl Bot {
     }
 
     /// Run the bot. Requires an active [`tokio`] runtime.
-    pub async fn run<H: RaceHandler>(&self) -> Result<Never, Error> {
+    pub async fn run<H: RaceHandler<S>>(&self) -> Result<Never, Error> {
         self.run_until::<H, _, _>(future::pending()).await
     }
 
     /// Run the bot until the `shutdown` future resolves. Requires an active [`tokio`] runtime. `shutdown` must be cancel safe.
-    pub async fn run_until<H: RaceHandler, T, Fut: Future<Output = T>>(&self, shutdown: Fut) -> Result<T, Error> {
+    pub async fn run_until<H: RaceHandler<S>, T, Fut: Future<Output = T>>(&self, shutdown: Fut) -> Result<T, Error> {
         tokio::pin!(shutdown);
         // Divide the reauthorization interval by 2 to avoid token expiration
         let mut reauthorize = interval(self.data.lock().await.reauthorize_every / 2);
@@ -184,8 +185,9 @@ impl Bot {
                                 };
                                 let name = name.to_owned();
                                 let data_clone = Arc::clone(&self.data);
+                                let state_clone = Arc::clone(&self.state);
                                 tokio::spawn(async move {
-                                    Self::handle::<H>(stream, ctx).await.expect("error in race handler");
+                                    Self::handle::<H>(stream, ctx, state_clone).await.expect("error in race handler");
                                     data_clone.lock().await.handled_races.remove(&name);
                                 });
                             }

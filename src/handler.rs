@@ -199,7 +199,7 @@ impl RaceContext {
 
 /// This trait should be implemented using the [`async_trait`] attribute.
 #[async_trait]
-pub trait RaceHandler: Send + Sized + 'static {
+pub trait RaceHandler<S: Send + Sync + ?Sized + 'static>: Send + Sized + 'static {
     /// Called when a new race room is found. If this returns [`false`], that race is ignored entirely.
     ///
     /// The default implementation returns [`true`] for any race whose status value is neither [`finished`](RaceStatusValue::Finished) nor [`cancelled`](RaceStatusValue::Cancelled).
@@ -212,11 +212,11 @@ pub trait RaceHandler: Send + Sized + 'static {
     /// Equivalent to:
     ///
     /// ```ignore
-    /// async fn new(ctx: &RaceContext) -> Result<Self, Error>;
+    /// async fn new(ctx: &RaceContext, state: Arc<T>) -> Result<Self, Error>;
     /// ```
     ///
     /// The `RaceHandler` this returns will receive events for that race.
-    async fn new(ctx: &RaceContext) -> Result<Self, Error>;
+    async fn new(ctx: &RaceContext, state: Arc<S>) -> Result<Self, Error>;
 
     /// Called for each chat message that starts with `!` and was not sent by the system or a bot.
     ///
