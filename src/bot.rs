@@ -34,7 +34,7 @@ use {
     crate::{
         Error,
         RACETIME_HOST,
-        authorize,
+        authorize_with_host,
         handler::{
             RaceContext,
             RaceHandler,
@@ -71,7 +71,7 @@ impl<S: Send + Sync + ?Sized + 'static> Bot<S> {
 
     pub async fn new_with_host(host: &str, category_slug: &str, client_id: &str, client_secret: &str, state: Arc<S>) -> Result<Self, Error> {
         let client = reqwest::Client::builder().user_agent(concat!("racetime-rs/", env!("CARGO_PKG_VERSION"))).build()?;
-        let (access_token, reauthorize_every) = authorize(client_id, client_secret, &client).await?;
+        let (access_token, reauthorize_every) = authorize_with_host(host, client_id, client_secret, &client).await?;
         Ok(Bot {
             data: Arc::new(Mutex::new(BotData {
                 access_token, reauthorize_every,
@@ -135,7 +135,7 @@ impl<S: Send + Sync + ?Sized + 'static> Bot<S> {
                 output = &mut shutdown => return Ok(output), //TODO shut down running handlers
                 _ = reauthorize.tick() => {
                     let mut data = self.data.lock().await;
-                    match authorize(&data.client_id, &data.client_secret, &self.client).await {
+                    match authorize_with_host(&data.host, &data.client_id, &data.client_secret, &self.client).await {
                         Ok((access_token, reauthorize_every)) => {
                             data.access_token = access_token;
                             data.reauthorize_every = reauthorize_every;
