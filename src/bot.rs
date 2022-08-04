@@ -162,7 +162,7 @@ impl<S: Send + Sync + ?Sized + 'static> Bot<S> {
                     {
                         Ok(data) => data,
                         Err(e) => {
-                            eprintln!("Fatal error when attempting to retrieve category data: {:?}", e);
+                            eprintln!("Fatal error when attempting to retrieve category data: {e:?}");
                             sleep(SCAN_RACES_EVERY).await;
                             continue
                         }
@@ -177,7 +177,7 @@ impl<S: Send + Sync + ?Sized + 'static> Bot<S> {
                             {
                                 Ok(race_data) => race_data,
                                 Err(e) => {
-                                    eprintln!("Fatal error when attempting to retrieve data for race {}: {:?}", name, e);
+                                    eprintln!("Fatal error when attempting to retrieve data for race {name}: {e:?}");
                                     sleep(SCAN_RACES_EVERY).await;
                                     continue
                                 }

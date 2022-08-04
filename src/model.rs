@@ -1,4 +1,5 @@
 use {
+    std::collections::BTreeMap,
     chrono::{
         Duration,
         prelude::*,
@@ -55,14 +56,14 @@ pub struct CategoryData {
     pub slug: String,
     pub url: String,
     pub data_url: String,
-    pub image: Url,
-    pub info: String,
+    pub image: Option<Url>,
+    pub info: Option<String>,
     pub streaming_required: bool,
     pub owners: Vec<UserData>,
     pub moderators: Vec<UserData>,
     pub goals: Vec<String>,
     pub current_races: Vec<RaceSummary>,
-
+    pub emotes: BTreeMap<String, Url>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
@@ -234,6 +235,7 @@ pub struct UserData {
     pub pronouns: Option<String>,
     pub flair: String,
     pub twitch_name: Option<String>,
+    pub twitch_display_name: Option<String>,
     pub twitch_channel: Option<Url>,
     pub can_moderate: bool,
 }
