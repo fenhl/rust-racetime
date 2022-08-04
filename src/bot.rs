@@ -48,6 +48,7 @@ use {
 const SCAN_RACES_EVERY: Duration = Duration::from_secs(30);
 
 struct BotData {
+    host: String,
     category_slug: String,
     handled_races: HashSet<String>,
     client_id: String,
@@ -65,12 +66,17 @@ pub struct Bot<S: Send + Sync + ?Sized + 'static> {
 
 impl<S: Send + Sync + ?Sized + 'static> Bot<S> {
     pub async fn new(category_slug: &str, client_id: &str, client_secret: &str, state: Arc<S>) -> Result<Self, Error> {
+        Self::new_with_host(RACETIME_HOST, category_slug, client_id, client_secret, state).await
+    }
+
+    pub async fn new_with_host(host: &str, category_slug: &str, client_id: &str, client_secret: &str, state: Arc<S>) -> Result<Self, Error> {
         let client = reqwest::Client::builder().user_agent(concat!("racetime-rs/", env!("CARGO_PKG_VERSION"))).build()?;
         let (access_token, reauthorize_every) = authorize(client_id, client_secret, &client).await?;
         Ok(Bot {
             data: Arc::new(Mutex::new(BotData {
                 access_token, reauthorize_every,
                 handled_races: HashSet::default(),
+                host: host.to_owned(),
                 category_slug: category_slug.to_owned(),
                 client_id: client_id.to_owned(),
                 client_secret: client_secret.to_owned(),
@@ -146,7 +152,11 @@ impl<S: Send + Sync + ?Sized + 'static> Bot<S> {
                     }
                 }
                 _ = refresh_races.tick() => {
-                    let data = match async { http_uri(&format!("/{}/data", self.data.lock().await.category_slug)) }
+                    let url = async {
+                        let data = self.data.lock().await;
+                        http_uri(&data.host, &format!("/{}/data", &data.category_slug))
+                    };
+                    let data = match url
                         .and_then(|url| async { Ok(self.client.get(url).send().await?.error_for_status()?.json::<CategoryData>().await?) })
                         .await
                     {
@@ -161,7 +171,7 @@ impl<S: Send + Sync + ?Sized + 'static> Bot<S> {
                         let name = &summary_data.name;
                         let mut data = self.data.lock().await;
                         if !data.handled_races.contains(name) {
-                            let race_data = match async { http_uri(&summary_data.data_url) }
+                            let race_data = match async { http_uri(&data.host, &summary_data.data_url) }
                                 .and_then(|url| async { Ok(self.client.get(url).send().await?.error_for_status()?.json().await?) })
                                 .await
                             {
@@ -173,9 +183,9 @@ impl<S: Send + Sync + ?Sized + 'static> Bot<S> {
                                 }
                             };
                             if H::should_handle(&race_data)? {
-                                let mut request = format!("wss://{RACETIME_HOST}{}", race_data.websocket_bot_url).into_client_request()?;
+                                let mut request = format!("wss://{}{}", data.host, race_data.websocket_bot_url).into_client_request()?;
                                 request.headers_mut().append(http::header::HeaderName::from_static("authorization"), format!("Bearer {}", data.access_token).parse()?);
-                                let (ws_conn, _) = tokio_tungstenite::client_async_tls(request, TcpStream::connect((RACETIME_HOST, 443)).await?).await?;
+                                let (ws_conn, _) = tokio_tungstenite::client_async_tls(request, TcpStream::connect((&*data.host, 443)).await?).await?;
                                 data.handled_races.insert(name.to_owned());
                                 drop(data);
                                 let (sink, stream) = ws_conn.split();

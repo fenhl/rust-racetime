@@ -57,24 +57,28 @@ pub enum Error {
 }
 
 /// Generate a HTTP/HTTPS URI from the given URL path fragment.
-fn http_uri(url: &str) -> Result<Url, Error> {
-    uri("https", url)
+fn http_uri(host: &str, url: &str) -> Result<Url, Error> {
+    uri("https", host, url)
 }
 
 /// Generate a URI from the given protocol and URL path fragment.
-fn uri(proto: &str, url: &str) -> Result<Url, Error> {
-    Ok(format!("{proto}://{RACETIME_HOST}{url}").parse()?)
+fn uri(proto: &str, host: &str, url: &str) -> Result<Url, Error> {
+    Ok(format!("{proto}://{host}{url}").parse()?)
 }
 
 /// Get an OAuth2 token from the authentication server.
 pub async fn authorize(client_id: &str, client_secret: &str, client: &reqwest::Client) -> Result<(String, Duration), Error> {
+    authorize_with_host(RACETIME_HOST, client_id, client_secret, client).await
+}
+
+pub async fn authorize_with_host(host: &str, client_id: &str, client_secret: &str, client: &reqwest::Client) -> Result<(String, Duration), Error> {
     #[derive(Deserialize)]
     struct AuthResponse {
         access_token: String,
         expires_in: Option<u64>,
     }
 
-    let data = client.post(http_uri("/o/token")?)
+    let data = client.post(http_uri(host, "/o/token")?)
         .form(&collect![as BTreeMap<_, _>:
             "client_id" => client_id,
             "client_secret" => client_secret,
@@ -119,6 +123,10 @@ impl StartRace {
     ///
     /// An access token can be obtained using [`authorize`].
     pub async fn start(&self, access_token: &str, client: &reqwest::Client, category: &str) -> Result<String, Error> {
+        self.start_with_host(RACETIME_HOST, access_token, client, category).await
+    }
+
+    pub async fn start_with_host(&self, host: &str, access_token: &str, client: &reqwest::Client, category: &str) -> Result<String, Error> {
         fn form_bool(value: bool) -> &'static str { if value { "1" } else { "0" } }
 
         let start_delay = self.start_delay.to_string();
@@ -146,7 +154,7 @@ impl StartRace {
         if let Some(streaming_required) = self.streaming_required {
             form.insert("streaming_required", form_bool(streaming_required));
         }
-        let response = client.post(http_uri(&format!("/o/{category}/startrace"))?)
+        let response = client.post(http_uri(host, &format!("/o/{category}/startrace"))?)
             .bearer_auth(access_token)
             .form(&form)
             .send().await?
