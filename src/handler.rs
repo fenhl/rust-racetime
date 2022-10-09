@@ -223,9 +223,9 @@ pub trait RaceHandler<S: Send + Sync + ?Sized + 'static>: Send + Sized + 'static
     /// Equivalent to:
     ///
     /// ```ignore
-    /// async fn command(&mut self: _ctx: &RaceContext, _cmd_name: &str, _args: Vec<&str>, _is_moderator: bool, _is_monitor: bool, _msg: &ChatMessage) -> Result<(), Error>;
+    /// async fn command(&mut self: _ctx: &RaceContext, _cmd_name: String, _args: Vec<String>, _is_moderator: bool, _is_monitor: bool, _msg: &ChatMessage) -> Result<(), Error>;
     /// ```
-    async fn command(&mut self, _ctx: &RaceContext, _cmd_name: &str, _args: Vec<&str>, _is_moderator: bool, _is_monitor: bool, _msg: &ChatMessage) -> Result<(), Error> {
+    async fn command(&mut self, _ctx: &RaceContext, _cmd_name: String, _args: Vec<String>, _is_moderator: bool, _is_monitor: bool, _msg: &ChatMessage) -> Result<(), Error> {
         Ok(())
     }
 
@@ -279,15 +279,18 @@ pub trait RaceHandler<S: Send + Sync + ?Sized + 'static>: Send + Sized + 'static
             let can_monitor = message.user.as_ref().map_or(false, |sender|
                 data.opened_by.as_ref().map_or(false, |creator| creator.id == sender.id) || data.monitors.iter().any(|monitor| monitor.id == sender.id)
             );
-            let mut split = message.message[1..].split(' ');
-            self.command(
-                ctx,
-                split.next().expect("split always yields at least one item"),
-                split.collect(),
-                message.user.as_ref().map_or(false, |user| user.can_moderate),
-                can_monitor,
-                &message,
-            ).await?;
+            if let Some(mut split) = shlex::split(&message.message[1..]) {
+                if !split.is_empty() {
+                    self.command(
+                        ctx,
+                        split.remove(0),
+                        split,
+                        message.user.as_ref().map_or(false, |user| user.can_moderate),
+                        can_monitor,
+                        &message,
+                    ).await?;
+                }
+            }
         }
         Ok(())
     }
