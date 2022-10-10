@@ -160,6 +160,8 @@ pub struct RaceData {
     pub websocket_oauth_url: String,
     pub goal: Goal,
     pub info: String,
+    pub info_bot: String,
+    pub info_user: String,
     pub entrants_count: u32,
     pub entrants_count_finished: u32,
     pub entrants_count_inactive: u32,

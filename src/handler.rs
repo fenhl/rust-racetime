@@ -70,10 +70,19 @@ impl RaceContext {
         Ok(())
     }
 
-    /// Set the `info` field on the race room's data.
+    /// Set the `info_bot` field on the race room's data.
+    pub async fn set_bot_raceinfo(&self, info: &str) -> Result<(), Error> {
+        self.send_raw(&json!({
+            "action": "setinfo",
+            "data": {"info_bot": info},
+        })).await?;
+        Ok(())
+    }
+
+    /// Set the `info_user` field on the race room's data.
     ///
     /// `info` should be the information you wish to set, and `pos` the behavior in case there is existing info.
-    pub async fn set_raceinfo(&self, info: &str, pos: RaceInfoPos) -> Result<(), Error> {
+    pub async fn set_user_raceinfo(&self, info: &str, pos: RaceInfoPos) -> Result<(), Error> {
         let info = match (&*self.data().await.info, pos) {
             ("", _) | (_, RaceInfoPos::Overwrite) => info.to_owned(),
             (old_info, RaceInfoPos::Prefix) => format!("{info} | {old_info}"),
@@ -81,7 +90,7 @@ impl RaceContext {
         };
         self.send_raw(&json!({
             "action": "setinfo",
-            "data": {"info": info},
+            "data": {"info_user": info},
         })).await?;
         Ok(())
     }
