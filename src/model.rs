@@ -47,6 +47,8 @@ pub enum Message {
     },
     #[serde(rename = "race.renders")]
     RaceRenders,
+    #[serde(rename = "race.split")]
+    RaceSplit,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]

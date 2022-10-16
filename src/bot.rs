@@ -105,6 +105,7 @@ impl<S: Send + Sync + ?Sized + 'static> Bot<S> {
                             handler.race_data(&ctx, old_race_data).await?;
                         }
                         Message::RaceRenders => handler.race_renders(&ctx).await?,
+                        Message::RaceSplit => handler.race_split(&ctx).await?,
                     }
                     if handler.should_stop(&ctx).await? {
                         return handler.end(&ctx).await

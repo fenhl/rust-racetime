@@ -373,6 +373,17 @@ pub trait RaceHandler<S: Send + Sync + ?Sized + 'static>: Send + Sized + 'static
     ///
     /// The default implementation does nothing.
     async fn race_renders(&mut self, _ctx: &RaceContext) -> Result<(), Error> { Ok(()) }
+
+    /// Called when a `race.split` message is received.
+    ///
+    /// Equivalent to:
+    ///
+    /// ```ignore
+    /// async fn race_split(&mut self, _ctx: &RaceContext) -> Result<(), Error>;
+    /// ```
+    ///
+    /// The default implementation does nothing.
+    async fn race_split(&mut self, _ctx: &RaceContext) -> Result<(), Error> { Ok(()) }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
