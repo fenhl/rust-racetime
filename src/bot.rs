@@ -113,7 +113,7 @@ impl<S: Send + Sync + ?Sized + 'static> Bot<S> {
                 }
                 Ok(tungstenite::Message::Ping(payload)) => ctx.sender.lock().await.send(tungstenite::Message::Pong(payload)).await?,
                 Ok(msg) => return Err(Error::UnexpectedMessageType(msg)),
-                Err(e) => return Err(e.into()),
+                Err(e) => return Err(e.into()), //TODO reconnect automatically
             }
         }
         Err(Error::EndOfStream)
@@ -142,9 +142,9 @@ impl<S: Send + Sync + ?Sized + 'static> Bot<S> {
                             data.reauthorize_every = reauthorize_every;
                             reauthorize = interval(reauthorize_every / 2);
                         }
-                        Err(Error::Reqwest(e)) if e.status().map_or(false, |status| status.is_server_error()) => {
-                            // racetime.gg's auth endpoint has been known to return server errors intermittently.
-                            // In that case, we retry again after half the remaining lifetime of the current token, until that would exceed the rate limit.
+                        Err(Error::Reqwest(e)) if e.status().map_or(true, |status| status.is_server_error()) => {
+                            // racetime.gg's auth endpoint has been known to return server errors intermittently, and we should also resist intermittent network errors.
+                            // In those cases, we retry again after half the remaining lifetime of the current token, until that would exceed the rate limit.
                             let reauthorize_every = reauthorize.period() / 2;
                             if reauthorize_every < SCAN_RACES_EVERY { return Err(Error::Reqwest(e)) }
                             reauthorize = interval(reauthorize_every);
