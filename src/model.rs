@@ -126,6 +126,7 @@ pub struct Entrant {
     pub has_comment: bool,
     pub stream_live: bool,
     pub stream_override: bool,
+    pub team: Option<EntrantTeam>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
@@ -147,6 +148,16 @@ pub enum EntrantStatusValue {
     Done,
     Dnf,
     Dq,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct EntrantTeam {
+    name: String,
+    slug: String,
+    formal: bool,
+    url: String,
+    data_url: String,
+    avatar: Option<Url>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
