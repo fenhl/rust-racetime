@@ -87,18 +87,30 @@ impl<S: Send + Sync + ?Sized + 'static> Bot<S> {
 
     /// Low-level handler for the race room. Loops over the websocket,
     /// calling the appropriate method for each message that comes in.
-    async fn handle<H: RaceHandler<S>>(mut stream: WsStream, ctx: RaceContext, state: Arc<S>) -> Result<(), Error> {
+    async fn handle<H: RaceHandler<S>>(mut stream: WsStream, ctx: RaceContext, data: &Mutex<BotData>, state: Arc<S>) -> Result<(), Error> {
         let mut handler = H::new(&ctx, state).await?;
         while let Some(msg_res) = stream.next().await {
             match msg_res {
                 Ok(tungstenite::Message::Text(buf)) => {
-                    let data = serde_json::from_str(&buf)?;
-                    match data {
+                    match serde_json::from_str(&buf)? {
                         Message::ChatHistory { messages } => handler.chat_history(&ctx, messages).await?,
                         Message::ChatMessage { message } => handler.chat_message(&ctx, message).await?,
                         Message::ChatDelete { delete } => handler.chat_delete(&ctx, delete).await?,
                         Message::ChatPurge { purge } => handler.chat_purge(&ctx, purge).await?,
-                        Message::Error { errors } => handler.error(&ctx, errors).await?,
+                        Message::Error { errors } => {
+                            if errors.iter().all(|error| error == "Possible sync error. Refresh to continue.") {
+                                // This error is not documented by racetime.gg but the wording suggests a server-side network issue.
+                                // Reestablish the WebSocket connection as a workaround.
+                                let data = data.lock().await;
+                                let mut request = format!("wss://{}{}", data.host, ctx.data().await.websocket_bot_url).into_client_request()?;
+                                request.headers_mut().append(http::header::HeaderName::from_static("authorization"), format!("Bearer {}", data.access_token).parse()?);
+                                let (ws_conn, _) = tokio_tungstenite::client_async_tls(request, TcpStream::connect((&*data.host, 443)).await?).await?;
+                                drop(data);
+                                (*ctx.sender.lock().await, stream) = ws_conn.split();
+                            } else {
+                                handler.error(&ctx, errors).await?;
+                            }
+                        }
                         Message::Pong => handler.pong(&ctx).await?,
                         Message::RaceData { race } => {
                             let old_race_data = mem::replace(&mut *ctx.data.write().await, race);
@@ -198,7 +210,7 @@ impl<S: Send + Sync + ?Sized + 'static> Bot<S> {
                                 let data_clone = Arc::clone(&self.data);
                                 let state_clone = Arc::clone(&self.state);
                                 tokio::spawn(async move {
-                                    Self::handle::<H>(stream, ctx, state_clone).await.expect("error in race handler");
+                                    Self::handle::<H>(stream, ctx, &data_clone, state_clone).await.expect("error in race handler");
                                     data_clone.lock().await.handled_races.remove(&name);
                                 });
                             }
