@@ -152,12 +152,12 @@ pub enum EntrantStatusValue {
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct EntrantTeam {
-    name: String,
-    slug: String,
-    formal: bool,
-    url: String,
-    data_url: String,
-    avatar: Option<Url>,
+    pub name: String,
+    pub slug: String,
+    pub formal: bool,
+    pub url: String,
+    pub data_url: String,
+    pub avatar: Option<Url>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
