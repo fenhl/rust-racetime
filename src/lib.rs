@@ -56,6 +56,22 @@ pub enum Error {
     UnexpectedMessageType(tokio_tungstenite::tungstenite::Message),
 }
 
+/// A convenience trait for converting results to use this crate's [`Error`] type.
+pub trait ResultExt {
+    type Ok;
+
+    /// Convert the error to this crate's [`Error`] type using the [`Error::Custom`] variant.
+    fn to_racetime(self) -> Result<Self::Ok, Error>;
+}
+
+impl<T, E: std::error::Error + Send + 'static> ResultExt for Result<T, E> {
+    type Ok = T;
+
+    fn to_racetime(self) -> Result<T, Error> {
+        self.map_err(|e| Error::Custom(Box::new(e)))
+    }
+}
+
 /// Generate a HTTP/HTTPS URI from the given URL path fragment.
 fn http_uri(host: &str, url: &str) -> Result<Url, Error> {
     uri("https", host, url)
