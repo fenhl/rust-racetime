@@ -384,6 +384,17 @@ pub trait RaceHandler<S: Send + Sync + ?Sized + 'static>: Send + Sized + 'static
     ///
     /// The default implementation does nothing.
     async fn race_split(&mut self, _ctx: &RaceContext) -> Result<(), Error> { Ok(()) }
+
+    /// Called when a room handler task is created.
+    ///
+    /// Equivalent to:
+    ///
+    /// ```ignore
+    /// async fn task(_state: Arc<S>, _join_handle: tokio::task::JoinHandle<()>) -> Result<(), Error>;
+    /// ```
+    ///
+    /// The default implementation does nothing.
+    async fn task(_state: Arc<S>, _join_handle: tokio::task::JoinHandle<()>) -> Result<(), Error> { Ok(()) }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

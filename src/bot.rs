@@ -253,12 +253,12 @@ impl<S: Send + Sync + ?Sized + 'static> Bot<S> {
                                 let name = name.to_owned();
                                 let data_clone = Arc::clone(&self.data);
                                 let state_clone = Arc::clone(&self.state);
-                                tokio::spawn(async move {
+                                H::task(Arc::clone(&self.state), tokio::spawn(async move {
                                     if let Err((e, ctx)) = Self::handle::<H>(stream, ctx, &data_clone, state_clone).await {
                                         panic!("error in race handler {ctx}: {e}")
                                     }
                                     data_clone.lock().await.handled_races.remove(&name);
-                                });
+                                })).await?;
                             }
                         }
                     }
