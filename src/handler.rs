@@ -37,12 +37,13 @@ pub type WsSink = SplitSink<WebSocketStream<MaybeTlsStream<TcpStream>>, tungsten
 
 /// A type passed to [`RaceHandler`] callback methods which can be used to check the current status of the race or send messages.
 #[derive(Clone)]
-pub struct RaceContext {
+pub struct RaceContext<S: Send + Sync + ?Sized + 'static> {
+    pub global_state: Arc<S>,
     pub(crate) data: Arc<RwLock<RaceData>>,
     pub sender: Arc<Mutex<WsSink>>,
 }
 
-impl RaceContext {
+impl<S: Send + Sync + ?Sized + 'static> RaceContext<S> {
     /// Returns the current state of the race.
     pub async fn data(&self) -> RwLockReadGuard<'_, RaceData> {
         self.data.read().await
@@ -211,8 +212,14 @@ impl RaceContext {
 pub trait RaceHandler<S: Send + Sync + ?Sized + 'static>: Send + Sized + 'static {
     /// Called when a new race room is found. If this returns [`false`], that race is ignored entirely.
     ///
+    /// Equivalent to:
+    ///
+    /// ```ignore
+    /// async fn should_handle(race_data: &RaceData, _state: Arc<S>) -> Result<bool, Error>;
+    /// ```
+    ///
     /// The default implementation returns [`true`] for any race whose status value is neither [`finished`](RaceStatusValue::Finished) nor [`cancelled`](RaceStatusValue::Cancelled).
-    fn should_handle(race_data: &RaceData) -> Result<bool, Error> {
+    async fn should_handle(race_data: &RaceData, _state: Arc<S>) -> Result<bool, Error> {
         Ok(!matches!(race_data.status.value, RaceStatusValue::Finished | RaceStatusValue::Cancelled))
     }
 
@@ -221,11 +228,11 @@ pub trait RaceHandler<S: Send + Sync + ?Sized + 'static>: Send + Sized + 'static
     /// Equivalent to:
     ///
     /// ```ignore
-    /// async fn new(ctx: &RaceContext, state: Arc<T>) -> Result<Self, Error>;
+    /// async fn new(ctx: &RaceContext) -> Result<Self, Error>;
     /// ```
     ///
     /// The `RaceHandler` this returns will receive events for that race.
-    async fn new(ctx: &RaceContext, state: Arc<S>) -> Result<Self, Error>;
+    async fn new(ctx: &RaceContext<S>) -> Result<Self, Error>;
 
     /// Called for each chat message that starts with `!` and was not sent by the system or a bot.
     ///
@@ -234,7 +241,7 @@ pub trait RaceHandler<S: Send + Sync + ?Sized + 'static>: Send + Sized + 'static
     /// ```ignore
     /// async fn command(&mut self: _ctx: &RaceContext, _cmd_name: String, _args: Vec<String>, _is_moderator: bool, _is_monitor: bool, _msg: &ChatMessage) -> Result<(), Error>;
     /// ```
-    async fn command(&mut self, _ctx: &RaceContext, _cmd_name: String, _args: Vec<String>, _is_moderator: bool, _is_monitor: bool, _msg: &ChatMessage) -> Result<(), Error> {
+    async fn command(&mut self, _ctx: &RaceContext<S>, _cmd_name: String, _args: Vec<String>, _is_moderator: bool, _is_monitor: bool, _msg: &ChatMessage) -> Result<(), Error> {
         Ok(())
     }
 
@@ -247,8 +254,8 @@ pub trait RaceHandler<S: Send + Sync + ?Sized + 'static>: Send + Sized + 'static
     /// ```
     ///
     /// The default implementation checks [`should_handle`](RaceHandler::should_handle).
-    async fn should_stop(&mut self, ctx: &RaceContext) -> Result<bool, Error> {
-        Ok(!Self::should_handle(&*ctx.data().await)?)
+    async fn should_stop(&mut self, ctx: &RaceContext<S>) -> Result<bool, Error> {
+        Ok(!Self::should_handle(&*ctx.data().await, ctx.global_state.clone()).await?)
     }
 
     /// Bot actions to perform just before disconnecting from a race room.
@@ -260,7 +267,7 @@ pub trait RaceHandler<S: Send + Sync + ?Sized + 'static>: Send + Sized + 'static
     /// ```
     ///
     /// The default implementation does nothing.
-    async fn end(self, _ctx: &RaceContext) -> Result<(), Error> { Ok(()) }
+    async fn end(self, _ctx: &RaceContext<S>) -> Result<(), Error> { Ok(()) }
 
     /// Called when a `chat.history` message is received.
     ///
@@ -271,7 +278,7 @@ pub trait RaceHandler<S: Send + Sync + ?Sized + 'static>: Send + Sized + 'static
     /// ```
     ///
     /// The default implementation does nothing.
-    async fn chat_history(&mut self, _ctx: &RaceContext, _msgs: Vec<ChatMessage>) -> Result<(), Error> { Ok(()) }
+    async fn chat_history(&mut self, _ctx: &RaceContext<S>, _msgs: Vec<ChatMessage>) -> Result<(), Error> { Ok(()) }
 
     /// Called when a `chat.message` message is received.
     ///
@@ -282,7 +289,7 @@ pub trait RaceHandler<S: Send + Sync + ?Sized + 'static>: Send + Sized + 'static
     /// ```
     ///
     /// The default implementation calls [`command`](RaceHandler::command) if appropriate.
-    async fn chat_message(&mut self, ctx: &RaceContext, message: ChatMessage) -> Result<(), Error> {
+    async fn chat_message(&mut self, ctx: &RaceContext<S>, message: ChatMessage) -> Result<(), Error> {
         if !message.is_bot && !message.is_system.unwrap_or(false /* Python duck typing strikes again */) && message.message.starts_with('!') {
             let data = ctx.data().await;
             let can_monitor = message.user.as_ref().map_or(false, |sender|
@@ -313,7 +320,7 @@ pub trait RaceHandler<S: Send + Sync + ?Sized + 'static>: Send + Sized + 'static
     /// ```
     ///
     /// The default implementation does nothing.
-    async fn chat_delete(&mut self, _ctx: &RaceContext, _event: ChatDelete) -> Result<(), Error> { Ok(()) }
+    async fn chat_delete(&mut self, _ctx: &RaceContext<S>, _event: ChatDelete) -> Result<(), Error> { Ok(()) }
 
     /// Called when a `chat.purge` message is received.
     ///
@@ -324,7 +331,7 @@ pub trait RaceHandler<S: Send + Sync + ?Sized + 'static>: Send + Sized + 'static
     /// ```
     ///
     /// The default implementation does nothing.
-    async fn chat_purge(&mut self, _ctx: &RaceContext, _event: ChatPurge) -> Result<(), Error> { Ok(()) }
+    async fn chat_purge(&mut self, _ctx: &RaceContext<S>, _event: ChatPurge) -> Result<(), Error> { Ok(()) }
 
     /// Called when an `error` message is received.
     ///
@@ -335,7 +342,7 @@ pub trait RaceHandler<S: Send + Sync + ?Sized + 'static>: Send + Sized + 'static
     /// ```
     ///
     /// The default implementation returns the errors as `Error::Server`.
-    async fn error(&mut self, _ctx: &RaceContext, errors: Vec<String>) -> Result<(), Error> {
+    async fn error(&mut self, _ctx: &RaceContext<S>, errors: Vec<String>) -> Result<(), Error> {
         Err(Error::Server(errors))
     }
 
@@ -348,7 +355,7 @@ pub trait RaceHandler<S: Send + Sync + ?Sized + 'static>: Send + Sized + 'static
     /// ```
     ///
     /// The default implementation does nothing.
-    async fn pong(&mut self, _ctx: &RaceContext) -> Result<(), Error> { Ok(()) }
+    async fn pong(&mut self, _ctx: &RaceContext<S>) -> Result<(), Error> { Ok(()) }
 
     /// Called when a `race.data` message is received.
     ///
@@ -361,7 +368,7 @@ pub trait RaceHandler<S: Send + Sync + ?Sized + 'static>: Send + Sized + 'static
     /// The new race data can be found in the [`RaceContext`] parameter. The [`RaceData`] parameter contains the previous data.
     ///
     /// The default implementation does nothing.
-    async fn race_data(&mut self, _ctx: &RaceContext, _old_race_data: RaceData) -> Result<(), Error> { Ok(()) }
+    async fn race_data(&mut self, _ctx: &RaceContext<S>, _old_race_data: RaceData) -> Result<(), Error> { Ok(()) }
 
     /// Called when a `race.renders` message is received.
     ///
@@ -372,7 +379,7 @@ pub trait RaceHandler<S: Send + Sync + ?Sized + 'static>: Send + Sized + 'static
     /// ```
     ///
     /// The default implementation does nothing.
-    async fn race_renders(&mut self, _ctx: &RaceContext) -> Result<(), Error> { Ok(()) }
+    async fn race_renders(&mut self, _ctx: &RaceContext<S>) -> Result<(), Error> { Ok(()) }
 
     /// Called when a `race.split` message is received.
     ///
@@ -383,7 +390,7 @@ pub trait RaceHandler<S: Send + Sync + ?Sized + 'static>: Send + Sized + 'static
     /// ```
     ///
     /// The default implementation does nothing.
-    async fn race_split(&mut self, _ctx: &RaceContext) -> Result<(), Error> { Ok(()) }
+    async fn race_split(&mut self, _ctx: &RaceContext<S>) -> Result<(), Error> { Ok(()) }
 
     /// Called when a room handler task is created.
     ///

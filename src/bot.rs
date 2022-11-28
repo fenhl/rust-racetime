@@ -128,8 +128,8 @@ impl<S: Send + Sync + ?Sized + 'static> Bot<S> {
 
     /// Low-level handler for the race room. Loops over the websocket,
     /// calling the appropriate method for each message that comes in.
-    async fn handle<H: RaceHandler<S>>(mut stream: WsStream, ctx: RaceContext, data: &Mutex<BotData>, state: Arc<S>) -> Result<(), (Error, ErrorContext)> {
-        let mut handler = H::new(&ctx, state).await.map_err(|e| (e, ErrorContext::New))?;
+    async fn handle<H: RaceHandler<S>>(mut stream: WsStream, ctx: RaceContext<S>, data: &Mutex<BotData>) -> Result<(), (Error, ErrorContext)> {
+        let mut handler = H::new(&ctx).await.map_err(|e| (e, ErrorContext::New))?;
         while let Some(msg_res) = stream.next().await {
             match msg_res {
                 Ok(tungstenite::Message::Text(buf)) => {
@@ -239,7 +239,7 @@ impl<S: Send + Sync + ?Sized + 'static> Bot<S> {
                                     continue
                                 }
                             };
-                            if H::should_handle(&race_data)? {
+                            if H::should_handle(&race_data, Arc::clone(&self.state)).await? {
                                 let mut request = format!("wss://{}{}", data.host, race_data.websocket_bot_url).into_client_request()?;
                                 request.headers_mut().append(http::header::HeaderName::from_static("authorization"), format!("Bearer {}", data.access_token).parse()?);
                                 let (ws_conn, _) = tokio_tungstenite::client_async_tls(request, TcpStream::connect((&*data.host, 443)).await?).await?;
@@ -247,14 +247,14 @@ impl<S: Send + Sync + ?Sized + 'static> Bot<S> {
                                 drop(data);
                                 let (sink, stream) = ws_conn.split();
                                 let ctx = RaceContext {
+                                    global_state: Arc::clone(&self.state),
                                     data: Arc::new(RwLock::new(race_data)),
                                     sender: Arc::new(Mutex::new(sink)),
                                 };
                                 let name = name.to_owned();
                                 let data_clone = Arc::clone(&self.data);
-                                let state_clone = Arc::clone(&self.state);
                                 H::task(Arc::clone(&self.state), tokio::spawn(async move {
-                                    if let Err((e, ctx)) = Self::handle::<H>(stream, ctx, &data_clone, state_clone).await {
+                                    if let Err((e, ctx)) = Self::handle::<H>(stream, ctx, &data_clone).await {
                                         panic!("error in race handler {ctx}: {e}")
                                     }
                                     data_clone.lock().await.handled_races.remove(&name);
