@@ -36,7 +36,6 @@ pub type WsStream = SplitStream<WebSocketStream<MaybeTlsStream<TcpStream>>>;
 pub type WsSink = SplitSink<WebSocketStream<MaybeTlsStream<TcpStream>>, tungstenite::Message>;
 
 /// A type passed to [`RaceHandler`] callback methods which can be used to check the current status of the race or send messages.
-#[derive(Clone)]
 pub struct RaceContext<S: Send + Sync + ?Sized + 'static> {
     pub global_state: Arc<S>,
     pub(crate) data: Arc<RwLock<RaceData>>,
@@ -204,6 +203,16 @@ impl<S: Send + Sync + ?Sized + 'static> RaceContext<S> {
             },
         })).await?;
         Ok(())
+    }
+}
+
+impl<S: Send + Sync + ?Sized + 'static> Clone for RaceContext<S> {
+    fn clone(&self) -> Self {
+        Self {
+            global_state: Arc::clone(&self.global_state),
+            data: Arc::clone(&self.data),
+            sender: Arc::clone(&self.sender),
+        }
     }
 }
 
