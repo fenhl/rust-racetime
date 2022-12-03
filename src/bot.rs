@@ -25,7 +25,6 @@ use {
         time::{
             MissedTickBehavior,
             interval,
-            sleep,
         },
     },
     tokio_tungstenite::tungstenite::{
@@ -219,8 +218,7 @@ impl<S: Send + Sync + ?Sized + 'static> Bot<S> {
                     {
                         Ok(data) => data,
                         Err(e) => {
-                            eprintln!("Fatal error when attempting to retrieve category data: {e:?}");
-                            sleep(SCAN_RACES_EVERY).await;
+                            eprintln!("Error when attempting to retrieve category data (retrying in {} seconds): {e:?}", SCAN_RACES_EVERY.as_secs_f64());
                             continue
                         }
                     };
@@ -234,8 +232,7 @@ impl<S: Send + Sync + ?Sized + 'static> Bot<S> {
                             {
                                 Ok(race_data) => race_data,
                                 Err(e) => {
-                                    eprintln!("Fatal error when attempting to retrieve data for race {name}: {e:?}");
-                                    sleep(SCAN_RACES_EVERY).await;
+                                    eprintln!("Fatal error when attempting to retrieve data for race {name} (retrying in {} seconds): {e:?}", SCAN_RACES_EVERY.as_secs_f64());
                                     continue
                                 }
                             };
