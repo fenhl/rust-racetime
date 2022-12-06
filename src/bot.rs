@@ -23,8 +23,10 @@ use {
             RwLock,
         },
         time::{
+            Instant,
             MissedTickBehavior,
             interval,
+            interval_at,
         },
     },
     tokio_tungstenite::tungstenite::{
@@ -183,7 +185,7 @@ impl<S: Send + Sync + ?Sized + 'static> Bot<S> {
     pub async fn run_until<H: RaceHandler<S>, T, Fut: Future<Output = T>>(&self, shutdown: Fut) -> Result<T, Error> {
         tokio::pin!(shutdown);
         // Divide the reauthorization interval by 2 to avoid token expiration
-        let mut reauthorize = interval(self.data.lock().await.reauthorize_every / 2);
+        let mut reauthorize = interval_at(Instant::now() + self.data.lock().await.reauthorize_every / 2, self.data.lock().await.reauthorize_every / 2);
         let mut refresh_races = interval(SCAN_RACES_EVERY);
         refresh_races.set_missed_tick_behavior(MissedTickBehavior::Delay);
         loop {
@@ -195,14 +197,14 @@ impl<S: Send + Sync + ?Sized + 'static> Bot<S> {
                         Ok((access_token, reauthorize_every)) => {
                             data.access_token = access_token;
                             data.reauthorize_every = reauthorize_every;
-                            reauthorize = interval(reauthorize_every / 2);
+                            reauthorize = interval_at(Instant::now() + reauthorize_every / 2, reauthorize_every / 2);
                         }
                         Err(Error::Reqwest(e)) if e.status().map_or(true, |status| status.is_server_error()) => {
                             // racetime.gg's auth endpoint has been known to return server errors intermittently, and we should also resist intermittent network errors.
                             // In those cases, we retry again after half the remaining lifetime of the current token, until that would exceed the rate limit.
                             let reauthorize_every = reauthorize.period() / 2;
                             if reauthorize_every < SCAN_RACES_EVERY { return Err(Error::Reqwest(e)) }
-                            reauthorize = interval(reauthorize_every);
+                            reauthorize = interval_at(Instant::now() + reauthorize_every, reauthorize_every);
                         }
                         Err(e) => return Err(e),
                     }
