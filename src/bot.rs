@@ -185,7 +185,8 @@ impl<S: Send + Sync + ?Sized + 'static> Bot<S> {
     pub async fn run_until<H: RaceHandler<S>, T, Fut: Future<Output = T>>(&self, shutdown: Fut) -> Result<T, Error> {
         tokio::pin!(shutdown);
         // Divide the reauthorization interval by 2 to avoid token expiration
-        let mut reauthorize = interval_at(Instant::now() + self.data.lock().await.reauthorize_every / 2, self.data.lock().await.reauthorize_every / 2);
+        let reauthorize_every = self.data.lock().await.reauthorize_every / 2;
+        let mut reauthorize = interval_at(Instant::now() + reauthorize_every, reauthorize_every);
         let mut refresh_races = interval(SCAN_RACES_EVERY);
         refresh_races.set_missed_tick_behavior(MissedTickBehavior::Delay);
         loop {
