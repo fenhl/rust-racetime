@@ -237,7 +237,7 @@ pub trait RaceHandler<S: Send + Sync + ?Sized + 'static>: Send + Sized + 'static
     /// Equivalent to:
     ///
     /// ```ignore
-    /// async fn new(ctx: &RaceContext) -> Result<Self, Error>;
+    /// async fn new(ctx: &RaceContext<S>) -> Result<Self, Error>;
     /// ```
     ///
     /// The `RaceHandler` this returns will receive events for that race.
@@ -248,7 +248,7 @@ pub trait RaceHandler<S: Send + Sync + ?Sized + 'static>: Send + Sized + 'static
     /// Equivalent to:
     ///
     /// ```ignore
-    /// async fn command(&mut self: _ctx: &RaceContext, _cmd_name: String, _args: Vec<String>, _is_moderator: bool, _is_monitor: bool, _msg: &ChatMessage) -> Result<(), Error>;
+    /// async fn command(&mut self: _ctx: &RaceContext<S>, _cmd_name: String, _args: Vec<String>, _is_moderator: bool, _is_monitor: bool, _msg: &ChatMessage) -> Result<(), Error>;
     /// ```
     async fn command(&mut self, _ctx: &RaceContext<S>, _cmd_name: String, _args: Vec<String>, _is_moderator: bool, _is_monitor: bool, _msg: &ChatMessage) -> Result<(), Error> {
         Ok(())
@@ -259,7 +259,7 @@ pub trait RaceHandler<S: Send + Sync + ?Sized + 'static>: Send + Sized + 'static
     /// Equivalent to:
     ///
     /// ```ignore
-    /// async fn should_stop(&mut self, ctx: &RaceContext) -> Result<bool, Error>;
+    /// async fn should_stop(&mut self, ctx: &RaceContext<S>) -> Result<bool, Error>;
     /// ```
     ///
     /// The default implementation checks [`should_handle`](RaceHandler::should_handle).
@@ -272,7 +272,7 @@ pub trait RaceHandler<S: Send + Sync + ?Sized + 'static>: Send + Sized + 'static
     /// Equivalent to:
     ///
     /// ```ignore
-    /// async fn end(self, _ctx: &RaceContext) -> Result<(), Error>;
+    /// async fn end(self, _ctx: &RaceContext<S>) -> Result<(), Error>;
     /// ```
     ///
     /// The default implementation does nothing.
@@ -283,7 +283,7 @@ pub trait RaceHandler<S: Send + Sync + ?Sized + 'static>: Send + Sized + 'static
     /// Equivalent to:
     ///
     /// ```ignore
-    /// async fn chat_history(&mut self, _ctx: &RaceContext: _msgs: Vec<ChatMessage>) -> Result<(), Error>;
+    /// async fn chat_history(&mut self, _ctx: &RaceContext<S>: _msgs: Vec<ChatMessage>) -> Result<(), Error>;
     /// ```
     ///
     /// The default implementation does nothing.
@@ -294,7 +294,7 @@ pub trait RaceHandler<S: Send + Sync + ?Sized + 'static>: Send + Sized + 'static
     /// Equivalent to:
     ///
     /// ```ignore
-    /// async fn chat_message(&mut self, ctx: &RaceContext, message: ChatMessage) -> Result<(), Error>;
+    /// async fn chat_message(&mut self, ctx: &RaceContext<S>, message: ChatMessage) -> Result<(), Error>;
     /// ```
     ///
     /// The default implementation calls [`command`](RaceHandler::command) if appropriate.
@@ -325,7 +325,7 @@ pub trait RaceHandler<S: Send + Sync + ?Sized + 'static>: Send + Sized + 'static
     /// Equivalent to:
     ///
     /// ```ignore
-    /// async fn chat_delete(&mut self, _ctx: &RaceContext, _event: ChatDelete) -> Result<(), Error>;
+    /// async fn chat_delete(&mut self, _ctx: &RaceContext<S>, _event: ChatDelete) -> Result<(), Error>;
     /// ```
     ///
     /// The default implementation does nothing.
@@ -336,7 +336,7 @@ pub trait RaceHandler<S: Send + Sync + ?Sized + 'static>: Send + Sized + 'static
     /// Equivalent to:
     ///
     /// ```ignore
-    /// async fn chat_purge(&mut self, _ctx: &RaceContext, _event: ChatPurge) -> Result<(), Error>;
+    /// async fn chat_purge(&mut self, _ctx: &RaceContext<S>, _event: ChatPurge) -> Result<(), Error>;
     /// ```
     ///
     /// The default implementation does nothing.
@@ -347,7 +347,7 @@ pub trait RaceHandler<S: Send + Sync + ?Sized + 'static>: Send + Sized + 'static
     /// Equivalent to:
     ///
     /// ```ignore
-    /// async fn error(&mut self, _ctx: &RaceContext, errors: Vec<String>) -> Result<(), Error>;
+    /// async fn error(&mut self, _ctx: &RaceContext<S>, errors: Vec<String>) -> Result<(), Error>;
     /// ```
     ///
     /// The default implementation returns the errors as `Error::Server`.
@@ -360,7 +360,7 @@ pub trait RaceHandler<S: Send + Sync + ?Sized + 'static>: Send + Sized + 'static
     /// Equivalent to:
     ///
     /// ```ignore
-    /// async fn pong(&mut self, _ctx: &RaceContext) -> Result<(), Error>;
+    /// async fn pong(&mut self, _ctx: &RaceContext<S>) -> Result<(), Error>;
     /// ```
     ///
     /// The default implementation does nothing.
@@ -371,7 +371,7 @@ pub trait RaceHandler<S: Send + Sync + ?Sized + 'static>: Send + Sized + 'static
     /// Equivalent to:
     ///
     /// ```ignore
-    /// async fn race_data(&mut self, _ctx: &RaceContext, _old_race_data: RaceData) -> Result<(), Error>;
+    /// async fn race_data(&mut self, _ctx: &RaceContext<S>, _old_race_data: RaceData) -> Result<(), Error>;
     /// ```
     ///
     /// The new race data can be found in the [`RaceContext`] parameter. The [`RaceData`] parameter contains the previous data.
@@ -384,7 +384,7 @@ pub trait RaceHandler<S: Send + Sync + ?Sized + 'static>: Send + Sized + 'static
     /// Equivalent to:
     ///
     /// ```ignore
-    /// async fn race_renders(&mut self, _ctx: &RaceContext) -> Result<(), Error>;
+    /// async fn race_renders(&mut self, _ctx: &RaceContext<S>) -> Result<(), Error>;
     /// ```
     ///
     /// The default implementation does nothing.
@@ -395,7 +395,7 @@ pub trait RaceHandler<S: Send + Sync + ?Sized + 'static>: Send + Sized + 'static
     /// Equivalent to:
     ///
     /// ```ignore
-    /// async fn race_split(&mut self, _ctx: &RaceContext) -> Result<(), Error>;
+    /// async fn race_split(&mut self, _ctx: &RaceContext<S>) -> Result<(), Error>;
     /// ```
     ///
     /// The default implementation does nothing.
