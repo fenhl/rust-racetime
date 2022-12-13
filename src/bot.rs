@@ -61,7 +61,7 @@ enum ErrorContext {
     RaceData,
     RaceRenders,
     RaceSplit,
-    Reconnect,
+    //Reconnect,
     Recv,
     ServerError,
     ShouldStop,
@@ -81,7 +81,7 @@ impl fmt::Display for ErrorContext {
             Self::RaceData => write!(f, "from race_data callback"),
             Self::RaceRenders => write!(f, "from race_renders callback"),
             Self::RaceSplit => write!(f, "from race_split callback"),
-            Self::Reconnect => write!(f, "while trying to reconnect"),
+            //Self::Reconnect => write!(f, "while trying to reconnect"),
             Self::Recv => write!(f, "while waiting for message from server"),
             Self::ServerError => write!(f, "from error callback"),
             Self::ShouldStop => write!(f, "from should_stop callback"),
@@ -129,7 +129,7 @@ impl<S: Send + Sync + ?Sized + 'static> Bot<S> {
 
     /// Low-level handler for the race room. Loops over the websocket,
     /// calling the appropriate method for each message that comes in.
-    async fn handle<H: RaceHandler<S>>(mut stream: WsStream, ctx: RaceContext<S>, data: &Mutex<BotData>) -> Result<(), (Error, ErrorContext)> {
+    async fn handle<H: RaceHandler<S>>(mut stream: WsStream, ctx: RaceContext<S>, _ /*data*/: &Mutex<BotData>) -> Result<(), (Error, ErrorContext)> {
         let mut handler = H::new(&ctx).await.map_err(|e| (e, ErrorContext::New))?;
         while let Some(msg_res) = stream.next().await {
             match msg_res {
@@ -140,7 +140,7 @@ impl<S: Send + Sync + ?Sized + 'static> Bot<S> {
                         Message::ChatDelete { delete } => handler.chat_delete(&ctx, delete).await.map_err(|e| (e, ErrorContext::ChatDelete))?,
                         Message::ChatPurge { purge } => handler.chat_purge(&ctx, purge).await.map_err(|e| (e, ErrorContext::ChatPurge))?,
                         Message::Error { errors } => {
-                            if errors.iter().all(|error| error == "Possible sync error. Refresh to continue.") {
+                            /*if errors.iter().all(|error| error == "Possible sync error. Refresh to continue.") {
                                 // This error is not documented by racetime.gg but the wording suggests a server-side network issue.
                                 // Reestablish the WebSocket connection as a workaround.
                                 let data = data.lock().await;
@@ -152,7 +152,8 @@ impl<S: Send + Sync + ?Sized + 'static> Bot<S> {
                                 let (ws_conn, _) = tokio_tungstenite::client_async_tls(request, TcpStream::connect((&*data.host, 443)).await.map_err(|e| (e.into(), ErrorContext::Reconnect))?).await.map_err(|e| (e.into(), ErrorContext::Reconnect))?;
                                 drop(data);
                                 (*ctx.sender.lock().await, stream) = ws_conn.split();
-                            } else {
+                            } else*/ // Despite what it sounds like, this is a client-side error. See also https://github.com/racetimeGG/racetime-app/pull/196
+                            {
                                 handler.error(&ctx, errors).await.map_err(|e| (e, ErrorContext::ServerError))?;
                             }
                         }
