@@ -17,6 +17,7 @@ use {
         stream::StreamExt as _,
     },
     tokio::{
+        io,
         net::TcpStream,
         sync::{
             Mutex,
@@ -61,7 +62,7 @@ enum ErrorContext {
     RaceData,
     RaceRenders,
     RaceSplit,
-    //Reconnect,
+    Reconnect,
     Recv,
     ServerError,
     ShouldStop,
@@ -81,7 +82,7 @@ impl fmt::Display for ErrorContext {
             Self::RaceData => write!(f, "from race_data callback"),
             Self::RaceRenders => write!(f, "from race_renders callback"),
             Self::RaceSplit => write!(f, "from race_split callback"),
-            //Self::Reconnect => write!(f, "while trying to reconnect"),
+            Self::Reconnect => write!(f, "while trying to reconnect"),
             Self::Recv => write!(f, "while waiting for message from server"),
             Self::ServerError => write!(f, "from error callback"),
             Self::ShouldStop => write!(f, "from should_stop callback"),
@@ -129,7 +130,7 @@ impl<S: Send + Sync + ?Sized + 'static> Bot<S> {
 
     /// Low-level handler for the race room. Loops over the websocket,
     /// calling the appropriate method for each message that comes in.
-    async fn handle<H: RaceHandler<S>>(mut stream: WsStream, ctx: RaceContext<S>, _ /*data*/: &Mutex<BotData>) -> Result<(), (Error, ErrorContext)> {
+    async fn handle<H: RaceHandler<S>>(mut stream: WsStream, ctx: RaceContext<S>, data: &Mutex<BotData>) -> Result<(), (Error, ErrorContext)> {
         let mut handler = H::new(&ctx).await.map_err(|e| (e, ErrorContext::New))?;
         while let Some(msg_res) = stream.next().await {
             match msg_res {
@@ -171,7 +172,19 @@ impl<S: Send + Sync + ?Sized + 'static> Bot<S> {
                 }
                 Ok(tungstenite::Message::Ping(payload)) => ctx.sender.lock().await.send(tungstenite::Message::Pong(payload)).await.map_err(|e| (e.into(), ErrorContext::Ping))?,
                 Ok(msg) => return Err((Error::UnexpectedMessageType(msg), ErrorContext::Recv)),
-                Err(e) => return Err((e.into(), ErrorContext::Recv)), //TODO reconnect automatically
+                Err(tungstenite::Error::Io(e)) if e.kind() == io::ErrorKind::UnexpectedEof => { //TODO other error kinds?
+                    eprintln!("unexpected end of file while waiting for message form server, reconnecting…"); //TODO exponential backoff?
+                    let data = data.lock().await;
+                    let mut request = format!("wss://{}{}", data.host, ctx.data().await.websocket_bot_url).into_client_request().map_err(|e| (e.into(), ErrorContext::Reconnect))?;
+                    request.headers_mut().append(
+                        http::header::HeaderName::from_static("authorization"),
+                        format!("Bearer {}", data.access_token).parse::<http::header::HeaderValue>().map_err(|e| (e.into(), ErrorContext::Reconnect))?,
+                    );
+                    let (ws_conn, _) = tokio_tungstenite::client_async_tls(request, TcpStream::connect((&*data.host, 443)).await.map_err(|e| (e.into(), ErrorContext::Reconnect))?).await.map_err(|e| (e.into(), ErrorContext::Reconnect))?;
+                    drop(data);
+                    (*ctx.sender.lock().await, stream) = ws_conn.split();
+                }
+                Err(e) => return Err((e.into(), ErrorContext::Recv)),
             }
         }
         Err((Error::EndOfStream, ErrorContext::Recv))
@@ -256,7 +269,7 @@ impl<S: Send + Sync + ?Sized + 'static> Bot<S> {
                                 let data_clone = Arc::clone(&self.data);
                                 H::task(Arc::clone(&self.state), tokio::spawn(async move {
                                     if let Err((e, ctx)) = Self::handle::<H>(stream, ctx, &data_clone).await {
-                                        panic!("error in race handler {ctx}: {e}")
+                                        panic!("error in race handler {ctx}: {e} ({e:?})")
                                     }
                                     data_clone.lock().await.handled_races.remove(&name);
                                 })).await?;
