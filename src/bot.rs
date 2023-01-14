@@ -260,14 +260,15 @@ impl<S: Send + Sync + ?Sized + 'static> Bot<S> {
                                 data.handled_races.insert(name.to_owned());
                                 drop(data);
                                 let (sink, stream) = ws_conn.split();
+                                let race_data = Arc::new(RwLock::new(race_data));
                                 let ctx = RaceContext {
                                     global_state: Arc::clone(&self.state),
-                                    data: Arc::new(RwLock::new(race_data)),
+                                    data: Arc::clone(&race_data),
                                     sender: Arc::new(Mutex::new(sink)),
                                 };
                                 let name = name.to_owned();
                                 let data_clone = Arc::clone(&self.data);
-                                H::task(Arc::clone(&self.state), tokio::spawn(async move {
+                                H::task(Arc::clone(&self.state), race_data, tokio::spawn(async move {
                                     if let Err((e, ctx)) = Self::handle::<H>(stream, ctx, &data_clone).await {
                                         panic!("error in race handler {ctx}: {e} ({e:?})")
                                     }

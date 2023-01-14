@@ -406,11 +406,11 @@ pub trait RaceHandler<S: Send + Sync + ?Sized + 'static>: Send + Sized + 'static
     /// Equivalent to:
     ///
     /// ```ignore
-    /// async fn task(_state: Arc<S>, _join_handle: tokio::task::JoinHandle<()>) -> Result<(), Error>;
+    /// async fn task(_state: Arc<S>, _race_data: Arc<RwLock<RaceData>>, _join_handle: tokio::task::JoinHandle<()>) -> Result<(), Error>;
     /// ```
     ///
     /// The default implementation does nothing.
-    async fn task(_state: Arc<S>, _join_handle: tokio::task::JoinHandle<()>) -> Result<(), Error> { Ok(()) }
+    async fn task(_state: Arc<S>, _race_data: Arc<RwLock<RaceData>>, _join_handle: tokio::task::JoinHandle<()>) -> Result<(), Error> { Ok(()) }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
