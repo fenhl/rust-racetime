@@ -164,6 +164,7 @@ pub struct EntrantTeam {
 pub struct RaceData {
     pub version: u32,
     pub name: String,
+    pub slug: String,
     pub category: CategorySummary,
     pub status: RaceStatus,
     pub url: String,
