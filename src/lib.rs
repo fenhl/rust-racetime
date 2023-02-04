@@ -109,6 +109,10 @@ pub async fn authorize_with_host(host: &str, client_id: &str, client_secret: &st
     ))
 }
 
+fn form_bool(value: bool) -> &'static str {
+    if value { "true" } else { "false" }
+}
+
 pub struct StartRace {
     pub goal: String,
     pub goal_is_custom: bool,
@@ -143,8 +147,6 @@ impl StartRace {
     }
 
     pub async fn start_with_host(&self, host: &str, access_token: &str, client: &reqwest::Client, category: &str) -> Result<String, Error> {
-        fn form_bool(value: bool) -> &'static str { if value { "1" } else { "0" } }
-
         let start_delay = self.start_delay.to_string();
         let time_limit = self.time_limit.to_string();
         let chat_message_delay = self.chat_message_delay.to_string();
@@ -182,5 +184,106 @@ impl StartRace {
         let (_, location_category, slug) = regex_captures!("^/([^/]+)/([^/]+)$", location).ok_or(Error::LocationFormat)?;
         if location_category != category { return Err(Error::LocationCategory) }
         Ok(slug.to_owned())
+    }
+}
+
+pub struct EditRace {
+    // required fields
+
+    /// If the race has already started, this must match the current goal.
+    pub goal: String,
+    /// If the race has already started, this must match the current goal.
+    pub goal_is_custom: bool,
+    /// Number of seconds the countdown should run for. Must be in `10..=60`.
+    /// If the race has already started, this must match the current delay.
+    pub start_delay: u8,
+    /// Maximum number of hours the race is allowed to run for. Must be in `1..=72`.
+    /// If the race has already started, this must match the current limit.
+    pub time_limit: u8,
+    /// Number of seconds to hold a message for before displaying it. Doesn't affect race monitors or moderators. Must be in `0..=90`.
+    pub chat_message_delay: u8,
+
+    // optional fields
+
+    pub team_race: Option<bool>,
+    pub unlisted: Option<bool>,
+    pub info_user: Option<String>,
+    pub info_bot: Option<String>,
+    pub require_even_teams: Option<bool>,
+    pub time_limit_auto_complete: Option<bool>,
+    /// If the race has already started, this cannot be changed.
+    pub streaming_required: Option<bool>,
+    /// If the race has already started, this cannot be changed.
+    pub auto_start: Option<bool>,
+    pub allow_comments: Option<bool>,
+    pub hide_comments: Option<bool>,
+    pub allow_prerace_chat: Option<bool>,
+    pub allow_midrace_chat: Option<bool>,
+    pub allow_non_entrant_chat: Option<bool>,
+}
+
+impl EditRace {
+    /// Edits the given race room, changing the specified fields.
+    ///
+    /// An access token can be obtained using [`authorize`].
+    pub async fn edit(&self, access_token: &str, client: &reqwest::Client, category: &str, race_slug: &str) -> Result<(), Error> {
+        self.edit_with_host(RACETIME_HOST, access_token, client, category, race_slug).await
+    }
+
+    pub async fn edit_with_host(&self, host: &str, access_token: &str, client: &reqwest::Client, category: &str, race_slug: &str) -> Result<(), Error> {
+        let start_delay = self.start_delay.to_string();
+        let time_limit = self.time_limit.to_string();
+        let chat_message_delay = self.chat_message_delay.to_string();
+        let mut form = collect![as BTreeMap<_, _>:
+            if self.goal_is_custom { "custom_goal" } else { "goal" } => &*self.goal,
+            "start_delay" => &*start_delay,
+            "time_limit" => &*time_limit,
+            "chat_message_delay" => &*chat_message_delay,
+        ];
+        if let Some(team_race) = self.team_race {
+            form.insert("team_race", form_bool(team_race));
+        }
+        if let Some(unlisted) = self.unlisted {
+            form.insert("unlisted", form_bool(unlisted));
+        }
+        if let Some(ref info_user) = self.info_user {
+            form.insert("info_user", &**info_user);
+        }
+        if let Some(ref info_bot) = self.info_bot {
+            form.insert("info_bot", &**info_bot);
+        }
+        if let Some(require_even_teams) = self.require_even_teams {
+            form.insert("require_even_teams", form_bool(require_even_teams));
+        }
+        if let Some(time_limit_auto_complete) = self.time_limit_auto_complete {
+            form.insert("time_limit_auto_complete", form_bool(time_limit_auto_complete));
+        }
+        if let Some(streaming_required) = self.streaming_required {
+            form.insert("streaming_required", form_bool(streaming_required));
+        }
+        if let Some(auto_start) = self.auto_start {
+            form.insert("auto_start", form_bool(auto_start));
+        }
+        if let Some(allow_comments) = self.allow_comments {
+            form.insert("allow_comments", form_bool(allow_comments));
+        }
+        if let Some(hide_comments) = self.hide_comments {
+            form.insert("hide_comments", form_bool(hide_comments));
+        }
+        if let Some(allow_prerace_chat) = self.allow_prerace_chat {
+            form.insert("allow_prerace_chat", form_bool(allow_prerace_chat));
+        }
+        if let Some(allow_midrace_chat) = self.allow_midrace_chat {
+            form.insert("allow_midrace_chat", form_bool(allow_midrace_chat));
+        }
+        if let Some(allow_non_entrant_chat) = self.allow_non_entrant_chat {
+            form.insert("allow_non_entrant_chat", form_bool(allow_non_entrant_chat));
+        }
+        client.post(http_uri(host, &format!("/o/{category}/{race_slug}/edit"))?)
+            .bearer_auth(access_token)
+            .form(&form)
+            .send().await?
+            .error_for_status()?;
+        Ok(())
     }
 }
