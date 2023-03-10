@@ -28,6 +28,7 @@ use {
             MissedTickBehavior,
             interval,
             interval_at,
+            sleep,
         },
     },
     tokio_tungstenite::tungstenite::{
@@ -131,6 +132,29 @@ impl<S: Send + Sync + ?Sized + 'static> Bot<S> {
     /// Low-level handler for the race room. Loops over the websocket,
     /// calling the appropriate method for each message that comes in.
     async fn handle<H: RaceHandler<S>>(mut stream: WsStream, ctx: RaceContext<S>, data: &Mutex<BotData>) -> Result<(), (Error, ErrorContext)> {
+        async fn reconnect<S: Send + Sync + ?Sized>(last_network_error: &mut Instant, reconnect_wait_time: &mut Duration, stream: &mut WsStream, ctx: &RaceContext<S>, data: &Mutex<BotData>, reason: &str) -> Result<(), Error> {
+            if last_network_error.elapsed() >= Duration::from_secs(60 * 60 * 24) {
+                *reconnect_wait_time = Duration::from_secs(1); // reset wait time after no crash for a day
+            } else {
+                *reconnect_wait_time *= 2; // exponential backoff
+            }
+            eprintln!("{reason}, reconnecting in {reconnect_wait_time:?}…");
+            sleep(*reconnect_wait_time).await;
+            *last_network_error = Instant::now();
+            let data = data.lock().await;
+            let mut request = format!("wss://{}{}", data.host, ctx.data().await.websocket_bot_url).into_client_request()?;
+            request.headers_mut().append(
+                http::header::HeaderName::from_static("authorization"),
+                format!("Bearer {}", data.access_token).parse::<http::header::HeaderValue>()?,
+            );
+            let (ws_conn, _) = tokio_tungstenite::client_async_tls(request, TcpStream::connect((&*data.host, 443)).await?).await?;
+            drop(data);
+            (*ctx.sender.lock().await, *stream) = ws_conn.split();
+            Ok(())
+        }
+
+        let mut last_network_error = Instant::now();
+        let mut reconnect_wait_time = Duration::from_secs(1);
         let mut handler = H::new(&ctx).await.map_err(|e| (e, ErrorContext::New))?;
         while let Some(msg_res) = stream.next().await {
             match msg_res {
@@ -171,19 +195,15 @@ impl<S: Send + Sync + ?Sized + 'static> Bot<S> {
                     }
                 }
                 Ok(tungstenite::Message::Ping(payload)) => ctx.sender.lock().await.send(tungstenite::Message::Pong(payload)).await.map_err(|e| (e.into(), ErrorContext::Ping))?,
+                Ok(tungstenite::Message::Close(Some(tungstenite::protocol::CloseFrame { reason, .. }))) if reason == "CloudFlare WebSocket proxy restarting" => reconnect(
+                    &mut last_network_error, &mut reconnect_wait_time, &mut stream, &ctx, data,
+                    "WebSocket connection closed by server",
+                ).await.map_err(|e| (e, ErrorContext::Reconnect))?,
                 Ok(msg) => return Err((Error::UnexpectedMessageType(msg), ErrorContext::Recv)),
-                Err(tungstenite::Error::Io(e)) if e.kind() == io::ErrorKind::UnexpectedEof => { //TODO other error kinds?
-                    eprintln!("unexpected end of file while waiting for message form server, reconnecting…"); //TODO exponential backoff?
-                    let data = data.lock().await;
-                    let mut request = format!("wss://{}{}", data.host, ctx.data().await.websocket_bot_url).into_client_request().map_err(|e| (e.into(), ErrorContext::Reconnect))?;
-                    request.headers_mut().append(
-                        http::header::HeaderName::from_static("authorization"),
-                        format!("Bearer {}", data.access_token).parse::<http::header::HeaderValue>().map_err(|e| (e.into(), ErrorContext::Reconnect))?,
-                    );
-                    let (ws_conn, _) = tokio_tungstenite::client_async_tls(request, TcpStream::connect((&*data.host, 443)).await.map_err(|e| (e.into(), ErrorContext::Reconnect))?).await.map_err(|e| (e.into(), ErrorContext::Reconnect))?;
-                    drop(data);
-                    (*ctx.sender.lock().await, stream) = ws_conn.split();
-                }
+                Err(tungstenite::Error::Io(e)) if e.kind() == io::ErrorKind::UnexpectedEof => reconnect( //TODO other error kinds?
+                    &mut last_network_error, &mut reconnect_wait_time, &mut stream, &ctx, data,
+                    "unexpected end of file while waiting for message form server",
+                ).await.map_err(|e| (e, ErrorContext::Reconnect))?,
                 Err(e) => return Err((e.into(), ErrorContext::Recv)),
             }
         }

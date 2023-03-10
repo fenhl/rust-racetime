@@ -1,6 +1,6 @@
 [package]
 name = "racetime"
-version = "0.12.0"
+version = "0.12.1"
 authors = ["Fenhl <fenhl@fenhl.net>"]
 edition = "2021"
 description = "racetime.gg category bot library"
@@ -38,7 +38,7 @@ version = "1"
 features = ["macros", "net", "rt", "sync", "time"]
 
 [dependencies.tokio-tungstenite]
-version = "0.17"
+version = "0.18"
 features = ["rustls-tls-webpki-roots"]
 
 [dependencies.url]
