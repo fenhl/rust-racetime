@@ -22,6 +22,7 @@ use {
         sync::{
             Mutex,
             RwLock,
+            mpsc,
         },
         time::{
             Instant,
@@ -101,11 +102,12 @@ struct BotData {
     reauthorize_every: Duration,
 }
 
-#[derive(Clone)]
 pub struct Bot<S: Send + Sync + ?Sized + 'static> {
     client: reqwest::Client,
     data: Arc<Mutex<BotData>>,
     state: Arc<S>,
+    extra_room_tx: mpsc::Sender<String>,
+    extra_room_rx: mpsc::Receiver<String>,
 }
 
 impl<S: Send + Sync + ?Sized + 'static> Bot<S> {
@@ -116,6 +118,7 @@ impl<S: Send + Sync + ?Sized + 'static> Bot<S> {
     pub async fn new_with_host(host: &str, category_slug: &str, client_id: &str, client_secret: &str, state: Arc<S>) -> Result<Self, Error> {
         let client = reqwest::Client::builder().user_agent(concat!("racetime-rs/", env!("CARGO_PKG_VERSION"))).build()?;
         let (access_token, reauthorize_every) = authorize_with_host(host, client_id, client_secret, &client).await?;
+        let (extra_room_tx, extra_room_rx) = mpsc::channel(1_024);
         Ok(Bot {
             data: Arc::new(Mutex::new(BotData {
                 access_token, reauthorize_every,
@@ -125,8 +128,15 @@ impl<S: Send + Sync + ?Sized + 'static> Bot<S> {
                 client_id: client_id.to_owned(),
                 client_secret: client_secret.to_owned(),
             })),
-            client, state,
+            client, state, extra_room_tx, extra_room_rx,
         })
+    }
+
+    /// Returns a sender that takes extra room slugs (e.g. as returned from [`crate::StartRace::start`]) and has the bot handle those rooms.
+    ///
+    /// This can be used to have the bot handle unlisted rooms, which aren't detected automatically since they're not listed on the category detail API endpoint.
+    pub fn extra_room_sender(&self) -> mpsc::Sender<String> {
+        self.extra_room_tx.clone()
     }
 
     /// Low-level handler for the race room. Loops over the websocket,
@@ -210,13 +220,52 @@ impl<S: Send + Sync + ?Sized + 'static> Bot<S> {
         Err((Error::EndOfStream, ErrorContext::Recv))
     }
 
+    async fn maybe_handle_race<H: RaceHandler<S>>(&self, name: &str, data_url: &str) -> Result<(), Error> {
+        let mut data = self.data.lock().await;
+        if !data.handled_races.contains(name) {
+            let race_data = match async { http_uri(&data.host, data_url) }
+                .and_then(|url| async { Ok(self.client.get(url).send().await?.error_for_status()?.json().await?) })
+                .await
+            {
+                Ok(race_data) => race_data,
+                Err(e) => {
+                    eprintln!("Fatal error when attempting to retrieve data for race {name} (retrying in {} seconds): {e:?}", SCAN_RACES_EVERY.as_secs_f64());
+                    return Ok(())
+                }
+            };
+            if H::should_handle(&race_data, Arc::clone(&self.state)).await? {
+                let mut request = format!("wss://{}{}", data.host, race_data.websocket_bot_url).into_client_request()?;
+                request.headers_mut().append(http::header::HeaderName::from_static("authorization"), format!("Bearer {}", data.access_token).parse()?);
+                let (ws_conn, _) = tokio_tungstenite::client_async_tls(request, TcpStream::connect((&*data.host, 443)).await?).await?;
+                data.handled_races.insert(name.to_owned());
+                drop(data);
+                let (sink, stream) = ws_conn.split();
+                let race_data = Arc::new(RwLock::new(race_data));
+                let ctx = RaceContext {
+                    global_state: Arc::clone(&self.state),
+                    data: Arc::clone(&race_data),
+                    sender: Arc::new(Mutex::new(sink)),
+                };
+                let name = name.to_owned();
+                let data_clone = Arc::clone(&self.data);
+                H::task(Arc::clone(&self.state), race_data, tokio::spawn(async move {
+                    if let Err((e, ctx)) = Self::handle::<H>(stream, ctx, &data_clone).await {
+                        panic!("error in race handler {ctx}: {e} ({e:?})")
+                    }
+                    data_clone.lock().await.handled_races.remove(&name);
+                })).await?;
+            }
+        }
+        Ok(())
+    }
+
     /// Run the bot. Requires an active [`tokio`] runtime.
-    pub async fn run<H: RaceHandler<S>>(&self) -> Result<Never, Error> {
+    pub async fn run<H: RaceHandler<S>>(self) -> Result<Never, Error> {
         self.run_until::<H, _, _>(future::pending()).await
     }
 
     /// Run the bot until the `shutdown` future resolves. Requires an active [`tokio`] runtime. `shutdown` must be cancel safe.
-    pub async fn run_until<H: RaceHandler<S>, T, Fut: Future<Output = T>>(&self, shutdown: Fut) -> Result<T, Error> {
+    pub async fn run_until<H: RaceHandler<S>, T, Fut: Future<Output = T>>(mut self, shutdown: Fut) -> Result<T, Error> {
         tokio::pin!(shutdown);
         // Divide the reauthorization interval by 2 to avoid token expiration
         let reauthorize_every = self.data.lock().await.reauthorize_every / 2;
@@ -260,43 +309,12 @@ impl<S: Send + Sync + ?Sized + 'static> Bot<S> {
                         }
                     };
                     for summary_data in data.current_races {
-                        let name = &summary_data.name;
-                        let mut data = self.data.lock().await;
-                        if !data.handled_races.contains(name) {
-                            let race_data = match async { http_uri(&data.host, &summary_data.data_url) }
-                                .and_then(|url| async { Ok(self.client.get(url).send().await?.error_for_status()?.json().await?) })
-                                .await
-                            {
-                                Ok(race_data) => race_data,
-                                Err(e) => {
-                                    eprintln!("Fatal error when attempting to retrieve data for race {name} (retrying in {} seconds): {e:?}", SCAN_RACES_EVERY.as_secs_f64());
-                                    continue
-                                }
-                            };
-                            if H::should_handle(&race_data, Arc::clone(&self.state)).await? {
-                                let mut request = format!("wss://{}{}", data.host, race_data.websocket_bot_url).into_client_request()?;
-                                request.headers_mut().append(http::header::HeaderName::from_static("authorization"), format!("Bearer {}", data.access_token).parse()?);
-                                let (ws_conn, _) = tokio_tungstenite::client_async_tls(request, TcpStream::connect((&*data.host, 443)).await?).await?;
-                                data.handled_races.insert(name.to_owned());
-                                drop(data);
-                                let (sink, stream) = ws_conn.split();
-                                let race_data = Arc::new(RwLock::new(race_data));
-                                let ctx = RaceContext {
-                                    global_state: Arc::clone(&self.state),
-                                    data: Arc::clone(&race_data),
-                                    sender: Arc::new(Mutex::new(sink)),
-                                };
-                                let name = name.to_owned();
-                                let data_clone = Arc::clone(&self.data);
-                                H::task(Arc::clone(&self.state), race_data, tokio::spawn(async move {
-                                    if let Err((e, ctx)) = Self::handle::<H>(stream, ctx, &data_clone).await {
-                                        panic!("error in race handler {ctx}: {e} ({e:?})")
-                                    }
-                                    data_clone.lock().await.handled_races.remove(&name);
-                                })).await?;
-                            }
-                        }
+                        self.maybe_handle_race::<H>(&summary_data.name, &summary_data.data_url).await?;
                     }
+                }
+                Some(slug) = self.extra_room_rx.recv() => {
+                    let data = self.data.lock().await;
+                    self.maybe_handle_race::<H>(&format!("{}/{}", data.category_slug, slug), &format!("/{}/{}/data", data.category_slug, slug)).await?;
                 }
             }
         }
