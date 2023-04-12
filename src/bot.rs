@@ -57,6 +57,7 @@ enum ErrorContext {
     ChatHistory,
     ChatMessage,
     ChatPurge,
+    Decode,
     End,
     New,
     Ping,
@@ -77,6 +78,7 @@ impl fmt::Display for ErrorContext {
             Self::ChatHistory => write!(f, "from chat_history callback"),
             Self::ChatMessage => write!(f, "from chat_message callback"),
             Self::ChatPurge => write!(f, "from chat_purge callback"),
+            Self::Decode => write!(f, "while decoding server message"),
             Self::End => write!(f, "from end callback"),
             Self::New => write!(f, "from RaceHandler constructor"),
             Self::Ping => write!(f, "while sending ping"),
@@ -169,7 +171,7 @@ impl<S: Send + Sync + ?Sized + 'static> Bot<S> {
         while let Some(msg_res) = stream.next().await {
             match msg_res {
                 Ok(tungstenite::Message::Text(buf)) => {
-                    match serde_json::from_str(&buf).map_err(|e| (e.into(), ErrorContext::Recv))? {
+                    match serde_json::from_str(&buf).map_err(|e| (e.into(), ErrorContext::Decode))? {
                         Message::ChatHistory { messages } => handler.chat_history(&ctx, messages).await.map_err(|e| (e, ErrorContext::ChatHistory))?,
                         Message::ChatMessage { message } => handler.chat_message(&ctx, message).await.map_err(|e| (e, ErrorContext::ChatMessage))?,
                         Message::ChatDelete { delete } => handler.chat_delete(&ctx, delete).await.map_err(|e| (e, ErrorContext::ChatDelete))?,
