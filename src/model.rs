@@ -155,8 +155,8 @@ pub struct EntrantTeam {
     pub name: String,
     pub slug: String,
     pub formal: bool,
-    pub url: String,
-    pub data_url: String,
+    pub url: Option<String>,
+    pub data_url: Option<String>,
     pub avatar: Option<Url>,
 }
 
