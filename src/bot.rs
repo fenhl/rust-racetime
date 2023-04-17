@@ -216,6 +216,10 @@ impl<S: Send + Sync + ?Sized + 'static> Bot<S> {
                     &mut last_network_error, &mut reconnect_wait_time, &mut stream, &ctx, data,
                     "unexpected end of file while waiting for message form server",
                 ).await.map_err(|e| (e, ErrorContext::Reconnect))?,
+                Err(tungstenite::Error::Protocol(tungstenite::error::ProtocolError::ResetWithoutClosingHandshake)) => reconnect(
+                    &mut last_network_error, &mut reconnect_wait_time, &mut stream, &ctx, data,
+                    "connection reset without closing handshake while waiting for message form server",
+                ).await.map_err(|e| (e, ErrorContext::Reconnect))?,
                 Err(e) => return Err((e.into(), ErrorContext::Recv)),
             }
         }
