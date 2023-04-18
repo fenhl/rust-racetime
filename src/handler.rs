@@ -50,7 +50,7 @@ impl<S: Send + Sync + ?Sized + 'static> RaceContext<S> {
 
     /// Sends a raw JSON message to the server.
     ///
-    /// The methods [`set_raceinfo`](RaceContext::set_raceinfo) through [`remove_monitor`](RaceContext::remove_monitor) should be preferred.
+    /// The methods [`set_bot_raceinfo`](RaceContext::set_bot_raceinfo) through [`remove_monitor`](RaceContext::remove_monitor) should be preferred.
     pub async fn send_raw(&self, message: &Json) -> Result<(), Error> {
         self.sender.lock().await.send(tungstenite::Message::Text(serde_json::to_string(&message)?)).await?;
         Ok(())
@@ -216,7 +216,7 @@ impl<S: Send + Sync + ?Sized + 'static> Clone for RaceContext<S> {
     }
 }
 
-/// This trait should be implemented using the [`async_trait`] attribute.
+/// This trait should be implemented using the [`macro@async_trait`] attribute.
 #[async_trait]
 pub trait RaceHandler<S: Send + Sync + ?Sized + 'static>: Send + Sized + 'static {
     /// Called when a new race room is found. If this returns [`false`], that race is ignored entirely.
