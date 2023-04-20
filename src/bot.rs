@@ -212,7 +212,7 @@ impl<S: Send + Sync + ?Sized + 'static> Bot<S> {
                     "WebSocket connection closed by server",
                 ).await.map_err(|e| (e, ErrorContext::Reconnect))?,
                 Ok(msg) => return Err((Error::UnexpectedMessageType(msg), ErrorContext::Recv)),
-                Err(tungstenite::Error::Io(e)) if e.kind() == io::ErrorKind::UnexpectedEof => reconnect( //TODO other error kinds?
+                Err(tungstenite::Error::Io(e)) if matches!(e.kind(), io::ErrorKind::ConnectionReset | io::ErrorKind::UnexpectedEof) => reconnect( //TODO other error kinds?
                     &mut last_network_error, &mut reconnect_wait_time, &mut stream, &ctx, data,
                     "unexpected end of file while waiting for message form server",
                 ).await.map_err(|e| (e, ErrorContext::Reconnect))?,
