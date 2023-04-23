@@ -32,7 +32,7 @@ const RACETIME_HOST: &str = "racetime.gg";
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
-    #[error(transparent)] Custom(#[from] Box<dyn std::error::Error + Send>),
+    #[error(transparent)] Custom(#[from] Box<dyn std::error::Error + Send + Sync>),
     #[error(transparent)] HeaderToStr(#[from] reqwest::header::ToStrError),
     #[error(transparent)] InvalidHeaderValue(#[from] http::header::InvalidHeaderValue),
     #[error(transparent)] Io(#[from] std::io::Error),
@@ -65,7 +65,7 @@ pub trait ResultExt {
     fn to_racetime(self) -> Result<Self::Ok, Error>;
 }
 
-impl<T, E: std::error::Error + Send + 'static> ResultExt for Result<T, E> {
+impl<T, E: std::error::Error + Send + Sync + 'static> ResultExt for Result<T, E> {
     type Ok = T;
 
     fn to_racetime(self) -> Result<T, Error> {
