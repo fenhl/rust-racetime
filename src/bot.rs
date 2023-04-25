@@ -113,7 +113,6 @@ pub struct Bot<S: Send + Sync + ?Sized + 'static> {
 
 impl<S: Send + Sync + ?Sized + 'static> Bot<S> {
     pub async fn new(category_slug: &str, client_id: &str, client_secret: &str, state: Arc<S>) -> Result<Self, Error> {
-
         Self::new_with_host(HostInfo::default(), category_slug, client_id, client_secret, state).await
     }
 
