@@ -7,18 +7,18 @@
 #![deny(rust_2018_idioms, unused, unused_crate_dependencies, unused_import_braces, unused_qualifications, warnings)]
 #![forbid(unsafe_code)]
 
-use std::num::NonZeroU16;
-use tokio::net::ToSocketAddrs;
 use {
     std::{
         borrow::Cow,
         collections::BTreeMap,
+        num::NonZeroU16,
         time::Duration,
     },
     collect_mac::collect,
     itertools::Itertools as _,
     lazy_regex::regex_captures,
     serde::Deserialize,
+    tokio::net::ToSocketAddrs,
     url::Url,
 };
 pub use crate::{
@@ -75,20 +75,17 @@ impl<T, E: std::error::Error + Send + Sync + 'static> ResultExt for Result<T, E>
     }
 }
 
-
 pub struct HostInfo {
     hostname: String,
-    secure: bool,
     port: NonZeroU16,
+    secure: bool,
 }
 
 impl HostInfo {
-
-    pub fn new<S: Into<String>>(hostname: S, secure: bool, port: NonZeroU16) -> Self {
+    pub fn new(hostname: impl Into<String>, port: NonZeroU16, secure: bool) -> Self {
         Self {
             hostname: hostname.into(),
-            secure,
-            port
+            secure, port,
         }
     }
 
@@ -98,10 +95,11 @@ impl HostInfo {
             false => "http",
         }
     }
+
     fn websocket_protocol(&self) -> &'static str {
         match self.secure {
             true => "wss",
-            false => "ws"
+            false => "ws",
         }
     }
     fn http_uri(&self, url: &str) -> Result<Url, Error>  {
@@ -115,8 +113,11 @@ impl HostInfo {
     fn websocket_socketaddrs(&self) -> impl ToSocketAddrs + '_ {
         (self.hostname.as_str(), self.port.get())
     }
+}
 
-    fn racetime_gg() -> Self {
+impl Default for HostInfo {
+    /// Returns the host info for racetime.gg.
+    fn default() -> Self {
         Self {
             hostname: RACETIME_HOST.to_string(),
             port: NonZeroU16::new(443).unwrap(),
@@ -125,8 +126,6 @@ impl HostInfo {
     }
 }
 
-
-
 /// Generate a URI from the given protocol and URL path fragment.
 fn uri(proto: &str, host: &str, port: NonZeroU16, url: &str) -> Result<Url, Error> {
     Ok(format!("{proto}://{host}:{port}{url}").parse()?)
@@ -134,7 +133,7 @@ fn uri(proto: &str, host: &str, port: NonZeroU16, url: &str) -> Result<Url, Erro
 
 /// Get an OAuth2 token from the authentication server.
 pub async fn authorize(client_id: &str, client_secret: &str, client: &reqwest::Client) -> Result<(String, Duration), Error> {
-    authorize_with_host(&HostInfo::racetime_gg(), client_id, client_secret, client).await
+    authorize_with_host(&HostInfo::default(), client_id, client_secret, client).await
 }
 
 pub async fn authorize_with_host(host_info: &HostInfo, client_id: &str, client_secret: &str, client: &reqwest::Client) -> Result<(String, Duration), Error> {
@@ -229,11 +228,11 @@ impl StartRace {
     ///
     /// An access token can be obtained using [`authorize`].
     pub async fn start(&self, access_token: &str, client: &reqwest::Client, category: &str) -> Result<String, Error> {
-        self.start_with_host(&HostInfo::racetime_gg(), access_token, client, category).await
+        self.start_with_host(&HostInfo::default(), access_token, client, category).await
     }
 
     pub async fn start_with_host(&self, host_info: &HostInfo, access_token: &str, client: &reqwest::Client, category: &str) -> Result<String, Error> {
-        let response = client.post( host_info.http_uri(&format!("/o/{category}/startrace"))?)
+        let response = client.post(host_info.http_uri(&format!("/o/{category}/startrace"))?)
             .bearer_auth(access_token)
             .form(&self.form())
             .send().await?
@@ -253,7 +252,7 @@ impl StartRace {
     ///
     /// An access token can be obtained using [`authorize`].
     pub async fn edit(&self, access_token: &str, client: &reqwest::Client, category: &str, race_slug: &str) -> Result<(), Error> {
-        self.edit_with_host(&HostInfo::racetime_gg(), access_token, client, category, race_slug).await
+        self.edit_with_host(&HostInfo::default(), access_token, client, category, race_slug).await
     }
 
     pub async fn edit_with_host(&self, host_info: &HostInfo, access_token: &str, client: &reqwest::Client, category: &str, race_slug: &str) -> Result<(), Error> {

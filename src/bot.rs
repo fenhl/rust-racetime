@@ -38,6 +38,7 @@ use {
     },
     crate::{
         Error,
+        HostInfo,
         authorize_with_host,
         handler::{
             RaceContext,
@@ -47,7 +48,6 @@ use {
         model::*,
     },
 };
-use crate::HostInfo;
 
 const SCAN_RACES_EVERY: Duration = Duration::from_secs(30);
 
@@ -114,7 +114,7 @@ pub struct Bot<S: Send + Sync + ?Sized + 'static> {
 impl<S: Send + Sync + ?Sized + 'static> Bot<S> {
     pub async fn new(category_slug: &str, client_id: &str, client_secret: &str, state: Arc<S>) -> Result<Self, Error> {
 
-        Self::new_with_host(HostInfo::racetime_gg(), category_slug, client_id, client_secret, state).await
+        Self::new_with_host(HostInfo::default(), category_slug, client_id, client_secret, state).await
     }
 
     pub async fn new_with_host(host_info: HostInfo, category_slug: &str, client_id: &str, client_secret: &str, state: Arc<S>) -> Result<Self, Error> {
@@ -125,10 +125,10 @@ impl<S: Send + Sync + ?Sized + 'static> Bot<S> {
             data: Arc::new(Mutex::new(BotData {
                 access_token, reauthorize_every,
                 handled_races: HashSet::default(),
-                host_info,
                 category_slug: category_slug.to_owned(),
                 client_id: client_id.to_owned(),
                 client_secret: client_secret.to_owned(),
+                host_info,
             })),
             client, state, extra_room_tx, extra_room_rx,
         })
@@ -160,7 +160,7 @@ impl<S: Send + Sync + ?Sized + 'static> Bot<S> {
                 format!("Bearer {}", data.access_token).parse::<http::header::HeaderValue>()?,
             );
             let (ws_conn, _) = tokio_tungstenite::client_async_tls(
-                request, TcpStream::connect(data.host_info.websocket_socketaddrs()).await?
+                request, TcpStream::connect(data.host_info.websocket_socketaddrs()).await?,
             ).await?;
             drop(data);
             (*ctx.sender.lock().await, *stream) = ws_conn.split();
@@ -245,7 +245,7 @@ impl<S: Send + Sync + ?Sized + 'static> Bot<S> {
                 let mut request = data.host_info.websocket_uri(&race_data.websocket_bot_url)?.into_client_request()?;
                 request.headers_mut().append(http::header::HeaderName::from_static("authorization"), format!("Bearer {}", data.access_token).parse()?);
                 let (ws_conn, _) = tokio_tungstenite::client_async_tls(
-                    request, TcpStream::connect(data.host_info.websocket_socketaddrs()).await?
+                    request, TcpStream::connect(data.host_info.websocket_socketaddrs()).await?,
                 ).await?;
                 data.handled_races.insert(name.to_owned());
                 drop(data);
