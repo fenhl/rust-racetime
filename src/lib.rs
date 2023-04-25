@@ -7,6 +7,8 @@
 #![deny(rust_2018_idioms, unused, unused_crate_dependencies, unused_import_braces, unused_qualifications, warnings)]
 #![forbid(unsafe_code)]
 
+use std::num::NonZeroU16;
+use tokio::net::ToSocketAddrs;
 use {
     std::{
         borrow::Cow,
@@ -73,29 +75,76 @@ impl<T, E: std::error::Error + Send + Sync + 'static> ResultExt for Result<T, E>
     }
 }
 
-/// Generate a HTTP/HTTPS URI from the given URL path fragment.
-fn http_uri(host: &str, url: &str) -> Result<Url, Error> {
-    uri("https", host, url)
+
+pub struct HostInfo {
+    hostname: String,
+    secure: bool,
+    port: NonZeroU16,
 }
 
+impl HostInfo {
+
+    pub fn new<S: Into<String>>(hostname: S, secure: bool, port: NonZeroU16) -> Self {
+        Self {
+            hostname: hostname.into(),
+            secure,
+            port
+        }
+    }
+
+    fn http_protocol(&self) -> &'static str {
+        match self.secure {
+            true => "https",
+            false => "http",
+        }
+    }
+    fn websocket_protocol(&self) -> &'static str {
+        match self.secure {
+            true => "wss",
+            false => "ws"
+        }
+    }
+    fn http_uri(&self, url: &str) -> Result<Url, Error>  {
+        uri(self.http_protocol(), &self.hostname, self.port, url)
+    }
+
+    fn websocket_uri(&self, url: &str) -> Result<Url, Error> {
+        uri(self.websocket_protocol(), &self.hostname, self.port, url)
+    }
+
+    fn websocket_socketaddrs(&self) -> impl ToSocketAddrs + '_ {
+        (self.hostname.as_str(), self.port.get())
+    }
+
+    fn racetime_gg() -> Self {
+        Self {
+            hostname: RACETIME_HOST.to_string(),
+            port: NonZeroU16::new(443).unwrap(),
+            secure: true,
+        }
+    }
+}
+
+
+
 /// Generate a URI from the given protocol and URL path fragment.
-fn uri(proto: &str, host: &str, url: &str) -> Result<Url, Error> {
-    Ok(format!("{proto}://{host}{url}").parse()?)
+fn uri(proto: &str, host: &str, port: NonZeroU16, url: &str) -> Result<Url, Error> {
+    Ok(format!("{proto}://{host}:{port}{url}").parse()?)
 }
 
 /// Get an OAuth2 token from the authentication server.
 pub async fn authorize(client_id: &str, client_secret: &str, client: &reqwest::Client) -> Result<(String, Duration), Error> {
-    authorize_with_host(RACETIME_HOST, client_id, client_secret, client).await
+    authorize_with_host(&HostInfo::racetime_gg(), client_id, client_secret, client).await
 }
 
-pub async fn authorize_with_host(host: &str, client_id: &str, client_secret: &str, client: &reqwest::Client) -> Result<(String, Duration), Error> {
+pub async fn authorize_with_host(host_info: &HostInfo, client_id: &str, client_secret: &str, client: &reqwest::Client) -> Result<(String, Duration), Error> {
     #[derive(Deserialize)]
     struct AuthResponse {
         access_token: String,
         expires_in: Option<u64>,
     }
 
-    let data = client.post(http_uri(host, "/o/token")?)
+    let data = client.post(host_info.http_uri("/o/token")?)
         .form(&collect![as BTreeMap<_, _>:
             "client_id" => client_id,
             "client_secret" => client_secret,
@@ -180,11 +229,11 @@ impl StartRace {
     ///
     /// An access token can be obtained using [`authorize`].
     pub async fn start(&self, access_token: &str, client: &reqwest::Client, category: &str) -> Result<String, Error> {
-        self.start_with_host(RACETIME_HOST, access_token, client, category).await
+        self.start_with_host(&HostInfo::racetime_gg(), access_token, client, category).await
     }
 
-    pub async fn start_with_host(&self, host: &str, access_token: &str, client: &reqwest::Client, category: &str) -> Result<String, Error> {
-        let response = client.post(http_uri(host, &format!("/o/{category}/startrace"))?)
+    pub async fn start_with_host(&self, host_info: &HostInfo, access_token: &str, client: &reqwest::Client, category: &str) -> Result<String, Error> {
+        let response = client.post( host_info.http_uri(&format!("/o/{category}/startrace"))?)
             .bearer_auth(access_token)
             .form(&self.form())
             .send().await?
@@ -204,11 +253,11 @@ impl StartRace {
     ///
     /// An access token can be obtained using [`authorize`].
     pub async fn edit(&self, access_token: &str, client: &reqwest::Client, category: &str, race_slug: &str) -> Result<(), Error> {
-        self.edit_with_host(RACETIME_HOST, access_token, client, category, race_slug).await
+        self.edit_with_host(&HostInfo::racetime_gg(), access_token, client, category, race_slug).await
     }
 
-    pub async fn edit_with_host(&self, host: &str, access_token: &str, client: &reqwest::Client, category: &str, race_slug: &str) -> Result<(), Error> {
-        client.post(http_uri(host, &format!("/o/{category}/{race_slug}/edit"))?)
+    pub async fn edit_with_host(&self, host_info: &HostInfo, access_token: &str, client: &reqwest::Client, category: &str, race_slug: &str) -> Result<(), Error> {
+        client.post(host_info.http_uri(&format!("/o/{category}/{race_slug}/edit"))?)
             .bearer_auth(access_token)
             .form(&self.form())
             .send().await?

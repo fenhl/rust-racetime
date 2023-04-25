@@ -38,17 +38,16 @@ use {
     },
     crate::{
         Error,
-        RACETIME_HOST,
         authorize_with_host,
         handler::{
             RaceContext,
             RaceHandler,
             WsStream,
         },
-        http_uri,
         model::*,
     },
 };
+use crate::HostInfo;
 
 const SCAN_RACES_EVERY: Duration = Duration::from_secs(30);
 
@@ -95,7 +94,7 @@ impl fmt::Display for ErrorContext {
 }
 
 struct BotData {
-    host: String,
+    host_info: HostInfo,
     category_slug: String,
     handled_races: HashSet<String>,
     client_id: String,
@@ -114,18 +113,19 @@ pub struct Bot<S: Send + Sync + ?Sized + 'static> {
 
 impl<S: Send + Sync + ?Sized + 'static> Bot<S> {
     pub async fn new(category_slug: &str, client_id: &str, client_secret: &str, state: Arc<S>) -> Result<Self, Error> {
-        Self::new_with_host(RACETIME_HOST, category_slug, client_id, client_secret, state).await
+
+        Self::new_with_host(HostInfo::racetime_gg(), category_slug, client_id, client_secret, state).await
     }
 
-    pub async fn new_with_host(host: &str, category_slug: &str, client_id: &str, client_secret: &str, state: Arc<S>) -> Result<Self, Error> {
+    pub async fn new_with_host(host_info: HostInfo, category_slug: &str, client_id: &str, client_secret: &str, state: Arc<S>) -> Result<Self, Error> {
         let client = reqwest::Client::builder().user_agent(concat!("racetime-rs/", env!("CARGO_PKG_VERSION"))).build()?;
-        let (access_token, reauthorize_every) = authorize_with_host(host, client_id, client_secret, &client).await?;
+        let (access_token, reauthorize_every) = authorize_with_host(&host_info, client_id, client_secret, &client).await?;
         let (extra_room_tx, extra_room_rx) = mpsc::channel(1_024);
         Ok(Bot {
             data: Arc::new(Mutex::new(BotData {
                 access_token, reauthorize_every,
                 handled_races: HashSet::default(),
-                host: host.to_owned(),
+                host_info,
                 category_slug: category_slug.to_owned(),
                 client_id: client_id.to_owned(),
                 client_secret: client_secret.to_owned(),
@@ -154,12 +154,14 @@ impl<S: Send + Sync + ?Sized + 'static> Bot<S> {
             sleep(*reconnect_wait_time).await;
             *last_network_error = Instant::now();
             let data = data.lock().await;
-            let mut request = format!("wss://{}{}", data.host, ctx.data().await.websocket_bot_url).into_client_request()?;
+            let mut request = data.host_info.websocket_uri(&ctx.data().await.websocket_bot_url)?.into_client_request()?;
             request.headers_mut().append(
                 http::header::HeaderName::from_static("authorization"),
                 format!("Bearer {}", data.access_token).parse::<http::header::HeaderValue>()?,
             );
-            let (ws_conn, _) = tokio_tungstenite::client_async_tls(request, TcpStream::connect((&*data.host, 443)).await?).await?;
+            let (ws_conn, _) = tokio_tungstenite::client_async_tls(
+                request, TcpStream::connect(data.host_info.websocket_socketaddrs()).await?
+            ).await?;
             drop(data);
             (*ctx.sender.lock().await, *stream) = ws_conn.split();
             Ok(())
@@ -229,7 +231,7 @@ impl<S: Send + Sync + ?Sized + 'static> Bot<S> {
     async fn maybe_handle_race<H: RaceHandler<S>>(&self, name: &str, data_url: &str) -> Result<(), Error> {
         let mut data = self.data.lock().await;
         if !data.handled_races.contains(name) {
-            let race_data = match async { http_uri(&data.host, data_url) }
+            let race_data = match async { data.host_info.http_uri(data_url) }
                 .and_then(|url| async { Ok(self.client.get(url).send().await?.error_for_status()?.json().await?) })
                 .await
             {
@@ -240,9 +242,11 @@ impl<S: Send + Sync + ?Sized + 'static> Bot<S> {
                 }
             };
             if H::should_handle(&race_data, Arc::clone(&self.state)).await? {
-                let mut request = format!("wss://{}{}", data.host, race_data.websocket_bot_url).into_client_request()?;
+                let mut request = data.host_info.websocket_uri(&race_data.websocket_bot_url)?.into_client_request()?;
                 request.headers_mut().append(http::header::HeaderName::from_static("authorization"), format!("Bearer {}", data.access_token).parse()?);
-                let (ws_conn, _) = tokio_tungstenite::client_async_tls(request, TcpStream::connect((&*data.host, 443)).await?).await?;
+                let (ws_conn, _) = tokio_tungstenite::client_async_tls(
+                    request, TcpStream::connect(data.host_info.websocket_socketaddrs()).await?
+                ).await?;
                 data.handled_races.insert(name.to_owned());
                 drop(data);
                 let (sink, stream) = ws_conn.split();
@@ -283,7 +287,7 @@ impl<S: Send + Sync + ?Sized + 'static> Bot<S> {
                 output = &mut shutdown => return Ok(output), //TODO shut down running handlers
                 _ = reauthorize.tick() => {
                     let mut data = self.data.lock().await;
-                    match authorize_with_host(&data.host, &data.client_id, &data.client_secret, &self.client).await {
+                    match authorize_with_host(&data.host_info, &data.client_id, &data.client_secret, &self.client).await {
                         Ok((access_token, reauthorize_every)) => {
                             data.access_token = access_token;
                             data.reauthorize_every = reauthorize_every;
@@ -302,7 +306,7 @@ impl<S: Send + Sync + ?Sized + 'static> Bot<S> {
                 _ = refresh_races.tick() => {
                     let url = async {
                         let data = self.data.lock().await;
-                        http_uri(&data.host, &format!("/{}/data", &data.category_slug))
+                        data.host_info.http_uri(&format!("/{}/data", &data.category_slug))
                     };
                     let data = match url
                         .and_then(|url| async { Ok(self.client.get(url).send().await?.error_for_status()?.json::<CategoryData>().await?) })
