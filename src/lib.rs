@@ -76,13 +76,13 @@ impl<T, E: std::error::Error + Send + Sync + 'static> ResultExt for Result<T, E>
 }
 
 pub struct HostInfo {
-    hostname: String,
+    hostname: Cow<'static, str>,
     port: NonZeroU16,
     secure: bool,
 }
 
 impl HostInfo {
-    pub fn new(hostname: impl Into<String>, port: NonZeroU16, secure: bool) -> Self {
+    pub fn new(hostname: impl Into<Cow<'static, str>>, port: NonZeroU16, secure: bool) -> Self {
         Self {
             hostname: hostname.into(),
             secure, port,
@@ -111,7 +111,7 @@ impl HostInfo {
     }
 
     fn websocket_socketaddrs(&self) -> impl ToSocketAddrs + '_ {
-        (self.hostname.as_str(), self.port.get())
+        (&*self.hostname, self.port.get())
     }
 }
 
@@ -119,7 +119,7 @@ impl Default for HostInfo {
     /// Returns the host info for racetime.gg.
     fn default() -> Self {
         Self {
-            hostname: RACETIME_HOST.to_string(),
+            hostname: Cow::Borrowed(RACETIME_HOST),
             port: NonZeroU16::new(443).unwrap(),
             secure: true,
         }
