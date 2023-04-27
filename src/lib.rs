@@ -76,9 +76,9 @@ impl<T, E: std::error::Error + Send + Sync + 'static> ResultExt for Result<T, E>
 }
 
 pub struct HostInfo {
-    hostname: Cow<'static, str>,
-    port: NonZeroU16,
-    secure: bool,
+    pub hostname: Cow<'static, str>,
+    pub port: NonZeroU16,
+    pub secure: bool,
 }
 
 impl HostInfo {
