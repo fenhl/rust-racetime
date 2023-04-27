@@ -75,6 +75,7 @@ impl<T, E: std::error::Error + Send + Sync + 'static> ResultExt for Result<T, E>
     }
 }
 
+#[derive(Debug, Clone)]
 pub struct HostInfo {
     pub hostname: Cow<'static, str>,
     pub port: NonZeroU16,

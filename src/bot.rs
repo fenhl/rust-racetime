@@ -136,6 +136,7 @@ impl<S: Send + Sync + ?Sized + 'static> Bot<S> {
     /// Returns a sender that takes extra room slugs (e.g. as returned from [`crate::StartRace::start`]) and has the bot handle those rooms.
     ///
     /// This can be used to have the bot handle unlisted rooms, which aren't detected automatically since they're not listed on the category detail API endpoint.
+    /// It can also be used to send listed rooms created by the bot to spawn the room handler immediately rather than waiting for the next check for new rooms.
     pub fn extra_room_sender(&self) -> mpsc::Sender<String> {
         self.extra_room_tx.clone()
     }
