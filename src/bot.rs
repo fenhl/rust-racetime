@@ -323,8 +323,11 @@ impl<S: Send + Sync + ?Sized + 'static> Bot<S> {
                     }
                 }
                 Some(slug) = self.extra_room_rx.recv() => {
-                    let data = self.data.lock().await;
-                    self.maybe_handle_race::<H>(&format!("{}/{}", data.category_slug, slug), &format!("/{}/{}/data", data.category_slug, slug)).await?;
+                    let (name, data_url) = {
+                        let data = self.data.lock().await;
+                        (format!("{}/{}", data.category_slug, slug), format!("/{}/{}/data", data.category_slug, slug))
+                    };
+                    self.maybe_handle_race::<H>(&name, &data_url).await?;
                 }
             }
         }
