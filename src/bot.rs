@@ -145,24 +145,27 @@ impl<S: Send + Sync + ?Sized + 'static> Bot<S> {
     /// calling the appropriate method for each message that comes in.
     async fn handle<H: RaceHandler<S>>(mut stream: WsStream, ctx: RaceContext<S>, data: &Mutex<BotData>) -> Result<(), (Error, ErrorContext)> {
         async fn reconnect<S: Send + Sync + ?Sized>(last_network_error: &mut Instant, reconnect_wait_time: &mut Duration, stream: &mut WsStream, ctx: &RaceContext<S>, data: &Mutex<BotData>, reason: &str) -> Result<(), Error> {
-            if last_network_error.elapsed() >= Duration::from_secs(60 * 60 * 24) {
-                *reconnect_wait_time = Duration::from_secs(1); // reset wait time after no crash for a day
-            } else {
-                *reconnect_wait_time *= 2; // exponential backoff
-            }
-            eprintln!("{reason}, reconnecting in {reconnect_wait_time:?}…");
-            sleep(*reconnect_wait_time).await;
-            *last_network_error = Instant::now();
-            let data = data.lock().await;
-            let mut request = data.host_info.websocket_uri(&ctx.data().await.websocket_bot_url)?.into_client_request()?;
-            request.headers_mut().append(
-                http::header::HeaderName::from_static("authorization"),
-                format!("Bearer {}", data.access_token).parse::<http::header::HeaderValue>()?,
-            );
-            let (ws_conn, _) = tokio_tungstenite::client_async_tls(
-                request, TcpStream::connect(data.host_info.websocket_socketaddrs()).await?,
-            ).await?;
-            drop(data);
+            let ws_conn = loop {
+                if last_network_error.elapsed() >= Duration::from_secs(60 * 60 * 24) {
+                    *reconnect_wait_time = Duration::from_secs(1); // reset wait time after no crash for a day
+                } else {
+                    *reconnect_wait_time *= 2; // exponential backoff
+                }
+                eprintln!("{reason}, reconnecting in {reconnect_wait_time:?}…");
+                sleep(*reconnect_wait_time).await;
+                *last_network_error = Instant::now();
+                let data = data.lock().await;
+                let mut request = data.host_info.websocket_uri(&ctx.data().await.websocket_bot_url)?.into_client_request()?;
+                request.headers_mut().append(
+                    http::header::HeaderName::from_static("authorization"),
+                    format!("Bearer {}", data.access_token).parse::<http::header::HeaderValue>()?,
+                );
+                match tokio_tungstenite::client_async_tls(request, TcpStream::connect(data.host_info.websocket_socketaddrs()).await?).await {
+                    Ok((ws_conn, _)) => break ws_conn,
+                    Err(tungstenite::Error::Http(response)) if response.status().is_server_error() => continue,
+                    Err(e) => return Err(e.into()),
+                }
+            };
             (*ctx.sender.lock().await, *stream) = ws_conn.split();
             Ok(())
         }
@@ -178,24 +181,7 @@ impl<S: Send + Sync + ?Sized + 'static> Bot<S> {
                         Message::ChatMessage { message } => handler.chat_message(&ctx, message).await.map_err(|e| (e, ErrorContext::ChatMessage))?,
                         Message::ChatDelete { delete } => handler.chat_delete(&ctx, delete).await.map_err(|e| (e, ErrorContext::ChatDelete))?,
                         Message::ChatPurge { purge } => handler.chat_purge(&ctx, purge).await.map_err(|e| (e, ErrorContext::ChatPurge))?,
-                        Message::Error { errors } => {
-                            /*if errors.iter().all(|error| error == "Possible sync error. Refresh to continue.") {
-                                // This error is not documented by racetime.gg but the wording suggests a server-side network issue.
-                                // Reestablish the WebSocket connection as a workaround.
-                                let data = data.lock().await;
-                                let mut request = format!("wss://{}{}", data.host, ctx.data().await.websocket_bot_url).into_client_request().map_err(|e| (e.into(), ErrorContext::Reconnect))?;
-                                request.headers_mut().append(
-                                    http::header::HeaderName::from_static("authorization"),
-                                    format!("Bearer {}", data.access_token).parse::<http::header::HeaderValue>().map_err(|e| (e.into(), ErrorContext::Reconnect))?,
-                                );
-                                let (ws_conn, _) = tokio_tungstenite::client_async_tls(request, TcpStream::connect((&*data.host, 443)).await.map_err(|e| (e.into(), ErrorContext::Reconnect))?).await.map_err(|e| (e.into(), ErrorContext::Reconnect))?;
-                                drop(data);
-                                (*ctx.sender.lock().await, stream) = ws_conn.split();
-                            } else*/ // Despite what it sounds like, this is a client-side error. See also https://github.com/racetimeGG/racetime-app/pull/196
-                            {
-                                handler.error(&ctx, errors).await.map_err(|e| (e, ErrorContext::ServerError))?;
-                            }
-                        }
+                        Message::Error { errors } => handler.error(&ctx, errors).await.map_err(|e| (e, ErrorContext::ServerError))?,
                         Message::Pong => handler.pong(&ctx).await.map_err(|e| (e, ErrorContext::Pong))?,
                         Message::RaceData { race } => {
                             let old_race_data = mem::replace(&mut *ctx.data.write().await, race);
