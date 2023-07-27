@@ -12,7 +12,6 @@ use {
         borrow::Cow,
         collections::BTreeMap,
         num::NonZeroU16,
-        time::Duration,
     },
     collect_mac::collect,
     itertools::Itertools as _,
@@ -31,6 +30,9 @@ pub mod handler;
 pub mod model;
 
 const RACETIME_HOST: &str = "racetime.gg";
+
+/// An unsigned duration. This is a reexport of [`std::time::Duration`].
+pub type UDuration = std::time::Duration;
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
@@ -133,11 +135,11 @@ fn uri(proto: &str, host: &str, port: NonZeroU16, url: &str) -> Result<Url, Erro
 }
 
 /// Get an OAuth2 token from the authentication server.
-pub async fn authorize(client_id: &str, client_secret: &str, client: &reqwest::Client) -> Result<(String, Duration), Error> {
+pub async fn authorize(client_id: &str, client_secret: &str, client: &reqwest::Client) -> Result<(String, UDuration), Error> {
     authorize_with_host(&HostInfo::default(), client_id, client_secret, client).await
 }
 
-pub async fn authorize_with_host(host_info: &HostInfo, client_id: &str, client_secret: &str, client: &reqwest::Client) -> Result<(String, Duration), Error> {
+pub async fn authorize_with_host(host_info: &HostInfo, client_id: &str, client_secret: &str, client: &reqwest::Client) -> Result<(String, UDuration), Error> {
     #[derive(Deserialize)]
     struct AuthResponse {
         access_token: String,
@@ -155,7 +157,7 @@ pub async fn authorize_with_host(host_info: &HostInfo, client_id: &str, client_s
         .json::<AuthResponse>().await?;
     Ok((
         data.access_token,
-        Duration::from_secs(data.expires_in.unwrap_or(36000)),
+        UDuration::from_secs(data.expires_in.unwrap_or(36000)),
     ))
 }
 

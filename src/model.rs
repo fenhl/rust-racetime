@@ -1,9 +1,6 @@
 use {
     std::collections::BTreeMap,
-    chrono::{
-        Duration,
-        prelude::*,
-    },
+    chrono::prelude::*,
     lazy_regex::regex_captures,
     serde::{
         Deserialize,
@@ -14,6 +11,7 @@ use {
         },
     },
     url::Url,
+    crate::UDuration,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
@@ -115,8 +113,8 @@ pub struct Goal {
 pub struct Entrant {
     pub user: UserData,
     pub status: EntrantStatus,
-    #[serde(deserialize_with = "deserialize_opt_django_duration")]
-    pub finish_time: Option<Duration>,
+    #[serde(deserialize_with = "deserialize_opt_django_uduration")]
+    pub finish_time: Option<UDuration>,
     pub finished_at: Option<DateTime<Utc>>,
     pub place: Option<u32>,
     pub place_ordinal: Option<String>,
@@ -181,14 +179,14 @@ pub struct RaceData {
     pub entrants_count_inactive: u32,
     pub entrants: Vec<Entrant>,
     pub opened_at: DateTime<Utc>,
-    #[serde(deserialize_with = "deserialize_django_duration")]
-    pub start_delay: Duration,
+    #[serde(deserialize_with = "deserialize_django_uduration")]
+    pub start_delay: UDuration,
     pub started_at: Option<DateTime<Utc>>,
     pub ended_at: Option<DateTime<Utc>>,
     pub cancelled_at: Option<DateTime<Utc>>,
     pub unlisted: bool,
-    #[serde(deserialize_with = "deserialize_django_duration")]
-    pub time_limit: Duration,
+    #[serde(deserialize_with = "deserialize_django_uduration")]
+    pub time_limit: UDuration,
     pub streaming_required: bool,
     pub auto_start: bool,
     pub opened_by: Option<UserData>,
@@ -200,8 +198,8 @@ pub struct RaceData {
     pub hide_comments: bool,
     pub allow_midrace_chat: bool,
     pub allow_non_entrant_chat: bool,
-    #[serde(deserialize_with = "deserialize_django_duration")]
-    pub chat_message_delay: Duration,
+    #[serde(deserialize_with = "deserialize_django_uduration")]
+    pub chat_message_delay: UDuration,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
@@ -236,8 +234,8 @@ pub struct RaceSummary {
     pub entrants_count_inactive: u32,
     pub opened_at: DateTime<Utc>,
     pub started_at: Option<DateTime<Utc>>,
-    #[serde(deserialize_with = "deserialize_django_duration")]
-    pub time_limit: Duration,
+    #[serde(deserialize_with = "deserialize_django_uduration")]
+    pub time_limit: UDuration,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
@@ -256,29 +254,27 @@ pub struct UserData {
     pub can_moderate: bool,
 }
 
-fn deserialize_django_duration<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Duration, D::Error> {
+fn deserialize_django_uduration<'de, D: Deserializer<'de>>(deserializer: D) -> Result<UDuration, D::Error> {
     let s = String::deserialize(deserializer)?;
-    if let Some((_, sign, days, hours, minutes, seconds, ms)) = regex_captures!("^(-?)P([0-9]+)DT([0-9]+)H([0-9]+)M([0-9]+)(?:\\.([0-9]+))?S$", &s) {
-        Ok((Duration::days(days.parse().map_err(D::Error::custom)?)
-        + Duration::hours(hours.parse().map_err(D::Error::custom)?)
-        + Duration::minutes(minutes.parse().map_err(D::Error::custom)?)
-        + Duration::seconds(seconds.parse().map_err(D::Error::custom)?)
-        + Duration::microseconds(if ms.is_empty() { 0 } else { ms.parse().map_err(D::Error::custom)? }))
-        * if sign == "-" { -1 } else { 1 })
+    if let Some((_, days, hours, minutes, seconds, ms)) = regex_captures!("^P([0-9]+)DT([0-9]+)H([0-9]+)M([0-9]+)(?:\\.([0-9]+))?S$", &s) {
+        Ok(UDuration::from_secs(days.parse::<u64>().map_err(D::Error::custom)? * 60 * 60 * 24)
+        + UDuration::from_secs(hours.parse::<u64>().map_err(D::Error::custom)? * 60 * 60)
+        + UDuration::from_secs(minutes.parse::<u64>().map_err(D::Error::custom)? * 60)
+        + UDuration::from_secs(seconds.parse().map_err(D::Error::custom)?)
+        + UDuration::from_micros(if ms.is_empty() { 0 } else { ms.parse().map_err(D::Error::custom)? }))
     } else {
         Err(D::Error::invalid_value(Unexpected::Str(&s), &"a duration as produced by Django"))
     }
 }
 
-fn deserialize_opt_django_duration<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Option<Duration>, D::Error> {
+fn deserialize_opt_django_uduration<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Option<UDuration>, D::Error> {
     if let Some(s) = Option::<String>::deserialize(deserializer)? {
-        if let Some((_, sign, days, hours, minutes, seconds, ms)) = regex_captures!("^(-?)P([0-9]+)DT([0-9]+)H([0-9]+)M([0-9]+)(?:\\.([0-9]+))?S$", &s) {
-            Ok(Some((Duration::days(days.parse().map_err(D::Error::custom)?)
-            + Duration::hours(hours.parse().map_err(D::Error::custom)?)
-            + Duration::minutes(minutes.parse().map_err(D::Error::custom)?)
-            + Duration::seconds(seconds.parse().map_err(D::Error::custom)?)
-            + Duration::microseconds(if ms.is_empty() { 0 } else { ms.parse().map_err(D::Error::custom)? }))
-            * if sign == "-" { -1 } else { 1 }))
+        if let Some((_, days, hours, minutes, seconds, ms)) = regex_captures!("^P([0-9]+)DT([0-9]+)H([0-9]+)M([0-9]+)(?:\\.([0-9]+))?S$", &s) {
+            Ok(Some(UDuration::from_secs(days.parse::<u64>().map_err(D::Error::custom)? * 60 * 60 * 24)
+            + UDuration::from_secs(hours.parse::<u64>().map_err(D::Error::custom)? * 60 * 60)
+            + UDuration::from_secs(minutes.parse::<u64>().map_err(D::Error::custom)? * 60)
+            + UDuration::from_secs(seconds.parse().map_err(D::Error::custom)?)
+            + UDuration::from_micros(if ms.is_empty() { 0 } else { ms.parse().map_err(D::Error::custom)? })))
         } else {
             Err(D::Error::invalid_value(Unexpected::Str(&s), &"a duration as produced by Django"))
         }

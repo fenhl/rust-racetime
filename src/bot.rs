@@ -5,7 +5,6 @@ use {
         fmt,
         mem,
         sync::Arc,
-        time::Duration,
     },
     futures::{
         SinkExt as _,
@@ -39,6 +38,7 @@ use {
     crate::{
         Error,
         HostInfo,
+        UDuration,
         authorize_with_host,
         handler::{
             RaceContext,
@@ -49,7 +49,7 @@ use {
     },
 };
 
-const SCAN_RACES_EVERY: Duration = Duration::from_secs(30);
+const SCAN_RACES_EVERY: UDuration = UDuration::from_secs(30);
 
 enum ErrorContext {
     ChatDelete,
@@ -100,7 +100,7 @@ struct BotData {
     client_id: String,
     client_secret: String,
     access_token: String,
-    reauthorize_every: Duration,
+    reauthorize_every: UDuration,
 }
 
 pub struct Bot<S: Send + Sync + ?Sized + 'static> {
@@ -144,10 +144,10 @@ impl<S: Send + Sync + ?Sized + 'static> Bot<S> {
     /// Low-level handler for the race room. Loops over the websocket,
     /// calling the appropriate method for each message that comes in.
     async fn handle<H: RaceHandler<S>>(mut stream: WsStream, ctx: RaceContext<S>, data: &Mutex<BotData>) -> Result<(), (Error, ErrorContext)> {
-        async fn reconnect<S: Send + Sync + ?Sized>(last_network_error: &mut Instant, reconnect_wait_time: &mut Duration, stream: &mut WsStream, ctx: &RaceContext<S>, data: &Mutex<BotData>, reason: &str) -> Result<(), Error> {
+        async fn reconnect<S: Send + Sync + ?Sized>(last_network_error: &mut Instant, reconnect_wait_time: &mut UDuration, stream: &mut WsStream, ctx: &RaceContext<S>, data: &Mutex<BotData>, reason: &str) -> Result<(), Error> {
             let ws_conn = loop {
-                if last_network_error.elapsed() >= Duration::from_secs(60 * 60 * 24) {
-                    *reconnect_wait_time = Duration::from_secs(1); // reset wait time after no crash for a day
+                if last_network_error.elapsed() >= UDuration::from_secs(60 * 60 * 24) {
+                    *reconnect_wait_time = UDuration::from_secs(1); // reset wait time after no crash for a day
                 } else {
                     *reconnect_wait_time *= 2; // exponential backoff
                 }
@@ -171,7 +171,7 @@ impl<S: Send + Sync + ?Sized + 'static> Bot<S> {
         }
 
         let mut last_network_error = Instant::now();
-        let mut reconnect_wait_time = Duration::from_secs(1);
+        let mut reconnect_wait_time = UDuration::from_secs(1);
         let mut handler = H::new(&ctx).await.map_err(|e| (e, ErrorContext::New))?;
         while let Some(msg_res) = stream.next().await {
             match msg_res {
