@@ -1,5 +1,8 @@
 use {
-    std::sync::Arc,
+    std::{
+        borrow::Cow,
+        sync::Arc,
+    },
     async_trait::async_trait,
     futures::{
         SinkExt as _,
@@ -8,9 +11,10 @@ use {
             SplitStream,
         },
     },
-    serde_json::{
-        Value as Json,
-        json,
+    serde::Serialize,
+    serde_with::{
+        Map,
+        serde_as,
     },
     tokio::{
         net::TcpStream,
@@ -48,8 +52,14 @@ impl<S: Send + Sync + ?Sized + 'static> RaceContext<S> {
         self.data.read().await
     }
 
-    async fn send_raw(&self, message: &Json) -> Result<(), Error> {
-        self.sender.lock().await.send(tungstenite::Message::Text(serde_json::to_string(&message)?)).await?;
+    async fn send_raw(&self, action: &'static str, data: impl Serialize) -> Result<(), Error> {
+        #[derive(Serialize)]
+        struct RawMessage<T> {
+            action: &'static str,
+            data: T,
+        }
+
+        self.sender.lock().await.send(tungstenite::Message::Text(serde_json::to_string(&RawMessage { action, data })?)).await?;
         Ok(())
     }
 
@@ -57,13 +67,16 @@ impl<S: Send + Sync + ?Sized + 'static> RaceContext<S> {
     ///
     /// See [`send_message`](Self::send_message) for more options.
     pub async fn say(&self, message: &str) -> Result<(), Error> {
-        self.send_raw(&json!({
-            "action": "message",
-            "data": {
-                "message": message,
-                "guid": Uuid::new_v4(),
-            },
-        })).await
+        #[derive(Serialize)]
+        struct Data<'a> {
+            message: &'a str,
+            guid: Uuid,
+        }
+
+        self.send_raw("message", Data {
+            guid: Uuid::new_v4(),
+            message,
+        }).await
     }
 
     /// Send a chat message to the race room.
@@ -71,163 +84,188 @@ impl<S: Send + Sync + ?Sized + 'static> RaceContext<S> {
     /// * `message` should be the message string you want to send.
     /// * If `pinned` is set to true, the sent message will be automatically pinned.
     /// * If `actions` is provided, action buttons will appear below your message for users to click on. See [action buttons](https://github.com/racetimeGG/racetime-app/wiki/Category-bots#action-buttons) for more details.
-    pub async fn send_message(&self, message: &str, pinned: bool, actions: &[ActionButton]) -> Result<(), Error> {
-        self.send_raw(&json!({
-            "action": "message",
-            "data": {
-                "message": message,
-                "pinned": pinned,
-                "actions": actions,
-                "guid": Uuid::new_v4(),
-            },
-        })).await
+    pub async fn send_message(&self, message: &str, pinned: bool, actions: Vec<(&str, ActionButton)>) -> Result<(), Error> {
+        #[serde_as]
+        #[derive(Serialize)]
+        struct Data<'a> {
+            message: &'a str,
+            pinned: bool,
+            #[serde_as(as = "Map<_, _>")]
+            actions: Vec<(&'a str, ActionButton)>,
+            guid: Uuid,
+        }
+
+        self.send_raw("message", Data {
+            guid: Uuid::new_v4(),
+            message, pinned, actions,
+        }).await
     }
 
     /// Pin a chat message.
     ///
     /// `message_id` should be the `id` field of a [`ChatMessage`].
     pub async fn pin_message(&self, message_id: &str) -> Result<(), Error> {
-        self.send_raw(&json!({
-            "action": "pin_message",
-            "data": {
-                "message": message_id,
-            },
-        })).await
+        #[derive(Serialize)]
+        struct Data<'a> {
+            message: &'a str,
+        }
+
+        self.send_raw("pin_message", Data {
+            message: message_id,
+        }).await
     }
 
     /// Unpin a chat message.
     ///
     /// `message_id` should be the `id` field of a [`ChatMessage`].
     pub async fn unpin_message(&self, message_id: &str) -> Result<(), Error> {
-        self.send_raw(&json!({
-            "action": "unpin_message",
-            "data": {
-                "message": message_id,
-            },
-        })).await
+        #[derive(Serialize)]
+        struct Data<'a> {
+            message: &'a str,
+        }
+
+        self.send_raw("unpin_message", Data {
+            message: message_id,
+        }).await
     }
 
     /// Set the `info_bot` field on the race room's data.
     pub async fn set_bot_raceinfo(&self, info: &str) -> Result<(), Error> {
-        self.send_raw(&json!({
-            "action": "setinfo",
-            "data": {"info_bot": info},
-        })).await
+        #[derive(Serialize)]
+        struct Data<'a> {
+            info_bot: &'a str,
+        }
+
+        self.send_raw("setinfo", Data {
+            info_bot: info,
+        }).await
     }
 
     /// Set the `info_user` field on the race room's data.
     ///
     /// `info` should be the information you wish to set, and `pos` the behavior in case there is existing info.
     pub async fn set_user_raceinfo(&self, info: &str, pos: RaceInfoPos) -> Result<(), Error> {
-        let info = match (&*self.data().await.info, pos) {
-            ("", _) | (_, RaceInfoPos::Overwrite) => info.to_owned(),
-            (old_info, RaceInfoPos::Prefix) => format!("{info} | {old_info}"),
-            (old_info, RaceInfoPos::Suffix) => format!("{old_info} | {info}"),
+        #[derive(Serialize)]
+        struct Data<'a> {
+            info_user: Cow<'a, str>,
+        }
+
+        let info_user = match (&*self.data().await.info, pos) {
+            ("", _) | (_, RaceInfoPos::Overwrite) => Cow::Borrowed(info),
+            (old_info, RaceInfoPos::Prefix) => Cow::Owned(format!("{info} | {old_info}")),
+            (old_info, RaceInfoPos::Suffix) => Cow::Owned(format!("{old_info} | {info}")),
         };
-        self.send_raw(&json!({
-            "action": "setinfo",
-            "data": {"info_user": info},
-        })).await
+        self.send_raw("setinfo", Data {
+            info_user,
+        }).await
     }
 
     /// Set the room in an open state.
     pub async fn set_open(&self) -> Result<(), Error> {
-        self.send_raw(&json!({
-            "action": "make_open",
-        })).await
+        self.sender.lock().await.send(tungstenite::Message::Text(format!("{{\"action\": \"make_open\"}}"))).await?;
+        Ok(())
     }
 
     /// Set the room in an invite-only state.
     pub async fn set_invitational(&self) -> Result<(), Error> {
-        self.send_raw(&json!({
-            "action": "make_invitational",
-        })).await
+        self.sender.lock().await.send(tungstenite::Message::Text(format!("{{\"action\": \"make_invitational\"}}"))).await?;
+        Ok(())
     }
 
     /// Forces a start of the race.
     pub async fn force_start(&self) -> Result<(), Error> {
-        self.send_raw(&json!({
-            "action": "begin",
-        })).await
+        self.sender.lock().await.send(tungstenite::Message::Text(format!("{{\"action\": \"begin\"}}"))).await?;
+        Ok(())
     }
 
     /// Forcibly cancels a race.
     pub async fn cancel_race(&self) -> Result<(), Error> {
-        self.send_raw(&json!({
-            "action": "cancel",
-        })).await
+        self.sender.lock().await.send(tungstenite::Message::Text(format!("{{\"action\": \"cancel\"}}"))).await?;
+        Ok(())
     }
 
     /// Invites a user to the race.
     ///
     /// `user` should be the hashid of the user.
     pub async fn invite_user(&self, user: &str) -> Result<(), Error> {
-        self.send_raw(&json!({
-            "action": "invite",
-            "data": {
-                "user": user,
-            },
-        })).await
+        #[derive(Serialize)]
+        struct Data<'a> {
+            user: &'a str,
+        }
+
+        self.send_raw("invite", Data {
+            user,
+        }).await
     }
 
     /// Accepts a request to join the race room.
     ///
     /// `user` should be the hashid of the user.
     pub async fn accept_request(&self, user: &str) -> Result<(), Error> {
-        self.send_raw(&json!({
-            "action": "accept_request",
-            "data": {
-                "user": user,
-            },
-        })).await
+        #[derive(Serialize)]
+        struct Data<'a> {
+            user: &'a str,
+        }
+
+        self.send_raw("accept_request", Data {
+            user,
+        }).await
     }
 
     /// Forcibly unreadies an entrant.
     ///
     /// `user` should be the hashid of the user.
     pub async fn force_unready(&self, user: &str) -> Result<(), Error> {
-        self.send_raw(&json!({
-            "action": "force_unready",
-            "data": {
-                "user": user,
-            },
-        })).await
+        #[derive(Serialize)]
+        struct Data<'a> {
+            user: &'a str,
+        }
+
+        self.send_raw("force_unready", Data {
+            user,
+        }).await
     }
 
     /// Forcibly removes an entrant from the race.
     ///
     /// `user` should be the hashid of the user.
     pub async fn remove_entrant(&self, user: &str) -> Result<(), Error> {
-        self.send_raw(&json!({
-            "action": "remove_entrant",
-            "data": {
-                "user": user,
-            },
-        })).await
+        #[derive(Serialize)]
+        struct Data<'a> {
+            user: &'a str,
+        }
+
+        self.send_raw("remove_entrant", Data {
+            user,
+        }).await
     }
 
     /// Adds a user as a race monitor.
     ///
     /// `user` should be the hashid of the user.
     pub async fn add_monitor(&self, user: &str) -> Result<(), Error> {
-        self.send_raw(&json!({
-            "action": "add_monitor",
-            "data": {
-                "user": user,
-            },
-        })).await
+        #[derive(Serialize)]
+        struct Data<'a> {
+            user: &'a str,
+        }
+
+        self.send_raw("add_monitor", Data {
+            user,
+        }).await
     }
 
     /// Removes a user as a race monitor.
     ///
     /// `user` should be the hashid of the user.
     pub async fn remove_monitor(&self, user: &str) -> Result<(), Error> {
-        self.send_raw(&json!({
-            "action": "remove_monitor",
-            "data": {
-                "user": user,
-            },
-        })).await
+        #[derive(Serialize)]
+        struct Data<'a> {
+            user: &'a str,
+        }
+
+        self.send_raw("remove_monitor", Data {
+            user,
+        }).await
     }
 }
 
