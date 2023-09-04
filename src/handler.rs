@@ -53,6 +53,19 @@ impl<S: Send + Sync + ?Sized + 'static> RaceContext<S> {
         Ok(())
     }
 
+    /// Send a simple chat message to the race room.
+    ///
+    /// See [`send_message`](Self::send_message) for more options.
+    pub async fn say(&self, message: &str) -> Result<(), Error> {
+        self.send_raw(&json!({
+            "action": "message",
+            "data": {
+                "message": message,
+                "guid": Uuid::new_v4(),
+            },
+        })).await
+    }
+
     /// Send a chat message to the race room.
     ///
     /// * `message` should be the message string you want to send.
