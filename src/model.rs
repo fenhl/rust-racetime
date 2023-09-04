@@ -4,11 +4,16 @@ use {
     lazy_regex::regex_captures,
     serde::{
         Deserialize,
+        Serialize,
         de::{
             Deserializer,
             Error as _,
             Unexpected,
         },
+    },
+    serde_with::{
+        Map,
+        serde_as,
     },
     url::Url,
     crate::UDuration,
@@ -23,6 +28,14 @@ pub enum Message {
     },
     #[serde(rename = "chat.message")]
     ChatMessage {
+        message: ChatMessage,
+    },
+    #[serde(rename = "chat.pin")]
+    ChatPin {
+        message: ChatMessage,
+    },
+    #[serde(rename = "chat.unpin")]
+    ChatUnpin {
         message: ChatMessage,
     },
     #[serde(rename = "chat.delete")]
@@ -84,6 +97,7 @@ pub struct ChatDelete {
     pub deleted_by: UserData,
 }
 
+#[serde_as]
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct ChatMessage {
     pub id: String,
@@ -95,6 +109,9 @@ pub struct ChatMessage {
     pub highlight: bool,
     pub is_bot: bool,
     pub is_system: Option<bool>,
+    pub is_pinned: bool,
+    #[serde_as(as = "Map<_, _>")]
+    pub actions: Vec<(String, ActionButton)>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
@@ -252,6 +269,43 @@ pub struct UserData {
     pub twitch_display_name: Option<String>,
     pub twitch_channel: Option<Url>,
     pub can_moderate: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(untagged)]
+pub enum ActionButton {
+    Message {
+        message: String,
+        help_text: Option<String>,
+        survey: Option<Vec<SurveyQuestion>>,
+        submit: Option<String>,
+    },
+    Url {
+        url: Url,
+        help_text: Option<String>,
+    }
+}
+
+#[serde_as]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+pub struct SurveyQuestion {
+    pub name: String,
+    pub label: String,
+    pub default: Option<String>,
+    pub help_text: Option<String>,
+    #[serde(rename = "type")]
+    pub kind: SurveyQuestionKind,
+    pub placeholder: Option<String>,
+    #[serde_as(as = "Map<_, _>")]
+    pub options: Vec<(String, String)>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+pub enum SurveyQuestionKind {
+    Input,
+    Bool,
+    Radio,
+    Select,
 }
 
 fn deserialize_django_uduration<'de, D: Deserializer<'de>>(deserializer: D) -> Result<UDuration, D::Error> {

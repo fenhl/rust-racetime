@@ -48,26 +48,50 @@ impl<S: Send + Sync + ?Sized + 'static> RaceContext<S> {
         self.data.read().await
     }
 
-    /// Sends a raw JSON message to the server.
-    ///
-    /// The methods [`set_bot_raceinfo`](RaceContext::set_bot_raceinfo) through [`remove_monitor`](RaceContext::remove_monitor) should be preferred.
-    pub async fn send_raw(&self, message: &Json) -> Result<(), Error> {
+    async fn send_raw(&self, message: &Json) -> Result<(), Error> {
         self.sender.lock().await.send(tungstenite::Message::Text(serde_json::to_string(&message)?)).await?;
         Ok(())
     }
 
     /// Send a chat message to the race room.
     ///
-    /// `message` should be the message string you want to send.
-    pub async fn send_message(&self, message: &str) -> Result<(), Error> {
+    /// * `message` should be the message string you want to send.
+    /// * If `pinned` is set to true, the sent message will be automatically pinned.
+    /// * If `actions` is provided, action buttons will appear below your message for users to click on. See [action buttons](https://github.com/racetimeGG/racetime-app/wiki/Category-bots#action-buttons) for more details.
+    pub async fn send_message(&self, message: &str, pinned: bool, actions: &[ActionButton]) -> Result<(), Error> {
         self.send_raw(&json!({
             "action": "message",
             "data": {
                 "message": message,
+                "pinned": pinned,
+                "actions": actions,
                 "guid": Uuid::new_v4(),
             },
-        })).await?;
-        Ok(())
+        })).await
+    }
+
+    /// Pin a chat message.
+    ///
+    /// `message_id` should be the `id` field of a [`ChatMessage`].
+    pub async fn pin_message(&self, message_id: &str) -> Result<(), Error> {
+        self.send_raw(&json!({
+            "action": "pin_message",
+            "data": {
+                "message": message_id,
+            },
+        })).await
+    }
+
+    /// Unpin a chat message.
+    ///
+    /// `message_id` should be the `id` field of a [`ChatMessage`].
+    pub async fn unpin_message(&self, message_id: &str) -> Result<(), Error> {
+        self.send_raw(&json!({
+            "action": "unpin_message",
+            "data": {
+                "message": message_id,
+            },
+        })).await
     }
 
     /// Set the `info_bot` field on the race room's data.
@@ -75,8 +99,7 @@ impl<S: Send + Sync + ?Sized + 'static> RaceContext<S> {
         self.send_raw(&json!({
             "action": "setinfo",
             "data": {"info_bot": info},
-        })).await?;
-        Ok(())
+        })).await
     }
 
     /// Set the `info_user` field on the race room's data.
@@ -91,40 +114,35 @@ impl<S: Send + Sync + ?Sized + 'static> RaceContext<S> {
         self.send_raw(&json!({
             "action": "setinfo",
             "data": {"info_user": info},
-        })).await?;
-        Ok(())
+        })).await
     }
 
     /// Set the room in an open state.
     pub async fn set_open(&self) -> Result<(), Error> {
         self.send_raw(&json!({
             "action": "make_open",
-        })).await?;
-        Ok(())
+        })).await
     }
 
     /// Set the room in an invite-only state.
     pub async fn set_invitational(&self) -> Result<(), Error> {
         self.send_raw(&json!({
             "action": "make_invitational",
-        })).await?;
-        Ok(())
+        })).await
     }
 
     /// Forces a start of the race.
     pub async fn force_start(&self) -> Result<(), Error> {
         self.send_raw(&json!({
             "action": "begin",
-        })).await?;
-        Ok(())
+        })).await
     }
 
     /// Forcibly cancels a race.
     pub async fn cancel_race(&self) -> Result<(), Error> {
         self.send_raw(&json!({
             "action": "cancel",
-        })).await?;
-        Ok(())
+        })).await
     }
 
     /// Invites a user to the race.
@@ -136,8 +154,7 @@ impl<S: Send + Sync + ?Sized + 'static> RaceContext<S> {
             "data": {
                 "user": user,
             },
-        })).await?;
-        Ok(())
+        })).await
     }
 
     /// Accepts a request to join the race room.
@@ -149,8 +166,7 @@ impl<S: Send + Sync + ?Sized + 'static> RaceContext<S> {
             "data": {
                 "user": user,
             },
-        })).await?;
-        Ok(())
+        })).await
     }
 
     /// Forcibly unreadies an entrant.
@@ -162,8 +178,7 @@ impl<S: Send + Sync + ?Sized + 'static> RaceContext<S> {
             "data": {
                 "user": user,
             },
-        })).await?;
-        Ok(())
+        })).await
     }
 
     /// Forcibly removes an entrant from the race.
@@ -175,8 +190,7 @@ impl<S: Send + Sync + ?Sized + 'static> RaceContext<S> {
             "data": {
                 "user": user,
             },
-        })).await?;
-        Ok(())
+        })).await
     }
 
     /// Adds a user as a race monitor.
@@ -188,8 +202,7 @@ impl<S: Send + Sync + ?Sized + 'static> RaceContext<S> {
             "data": {
                 "user": user,
             },
-        })).await?;
-        Ok(())
+        })).await
     }
 
     /// Removes a user as a race monitor.
@@ -201,8 +214,7 @@ impl<S: Send + Sync + ?Sized + 'static> RaceContext<S> {
             "data": {
                 "user": user,
             },
-        })).await?;
-        Ok(())
+        })).await
     }
 }
 
@@ -319,6 +331,28 @@ pub trait RaceHandler<S: Send + Sync + ?Sized + 'static>: Send + Sized + 'static
         }
         Ok(())
     }
+
+    /// Called when a `chat.pin` message is received.
+    ///
+    /// Equivalent to:
+    ///
+    /// ```ignore
+    /// async fn chat_pin(&mut self, _ctx: &RaceContext<S>, _message: ChatMessage) -> Result<(), Error>;
+    /// ```
+    ///
+    /// The default implementation does nothing.
+    async fn chat_pin(&mut self, _ctx: &RaceContext<S>, _message: ChatMessage) -> Result<(), Error> { Ok(()) }
+
+    /// Called when a `chat.unpin` message is received.
+    ///
+    /// Equivalent to:
+    ///
+    /// ```ignore
+    /// async fn chat_unpin(&mut self, _ctx: &RaceContext<S>, _message: ChatMessage) -> Result<(), Error>;
+    /// ```
+    ///
+    /// The default implementation does nothing.
+    async fn chat_unpin(&mut self, _ctx: &RaceContext<S>, _message: ChatMessage) -> Result<(), Error> { Ok(()) }
 
     /// Called when a `chat.delete` message is received.
     ///
