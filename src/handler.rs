@@ -59,7 +59,9 @@ impl<S: Send + Sync + ?Sized + 'static> RaceContext<S> {
             data: T,
         }
 
-        self.sender.lock().await.send(tungstenite::Message::Text(serde_json::to_string(&RawMessage { action, data })?)).await?;
+        let text = serde_json::to_string(&RawMessage { action, data })?;
+        println!("racetime: sending {text}");
+        self.sender.lock().await.send(tungstenite::Message::Text(text)).await?;
         Ok(())
     }
 
