@@ -276,12 +276,16 @@ pub struct UserData {
 pub enum ActionButton {
     Message {
         message: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
         help_text: Option<String>,
-        survey: Option<Vec<SurveyQuestion>>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        survey: Option<Vec<SurveyQuestion>>, //TODO remove Option wrapping? (test whether an empty survey is different from no survey)
+        #[serde(skip_serializing_if = "Option::is_none")]
         submit: Option<String>,
     },
     Url {
         url: Url,
+        #[serde(skip_serializing_if = "Option::is_none")]
         help_text: Option<String>,
     }
 }
@@ -291,7 +295,9 @@ pub enum ActionButton {
 pub struct SurveyQuestion {
     pub name: String,
     pub label: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub default: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub help_text: Option<String>,
     #[serde(rename = "type")]
     pub kind: SurveyQuestionKind,
