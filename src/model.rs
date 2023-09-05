@@ -292,6 +292,7 @@ pub struct SurveyQuestion {
     pub name: String,
     pub label: String,
     pub default: Option<String>,
+    #[serde(rename = "help")]
     pub help_text: Option<String>,
     #[serde(rename = "type")]
     pub kind: SurveyQuestionKind,
@@ -301,6 +302,7 @@ pub struct SurveyQuestion {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "lowercase")]
 pub enum SurveyQuestionKind {
     Input,
     Bool,
