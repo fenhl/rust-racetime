@@ -301,8 +301,10 @@ pub struct SurveyQuestion {
     pub help_text: Option<String>,
     #[serde(rename = "type")]
     pub kind: SurveyQuestionKind,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub placeholder: Option<String>,
     #[serde_as(as = "Map<_, _>")]
+    #[serde(skip_serializing_if = "Vec::is_empty")]
     pub options: Vec<(String, String)>,
 }
 
