@@ -40,14 +40,20 @@ pub type WsStream = SplitStream<WebSocketStream<MaybeTlsStream<TcpStream>>>;
 pub type WsSink = SplitSink<WebSocketStream<MaybeTlsStream<TcpStream>>, tungstenite::Message>;
 
 /// A type passed to [`RaceHandler`] callback methods which can be used to check the current status of the race or send messages.
+///
+/// While a future returned from callback method is running, [`data`](Self::data) will not change and no other callbacks will be processed.
+/// [`Clone`] can be used to keep a value of this type past the end of a handler callback, e.g. by passing it into [`tokio::spawn`].
+/// If you do so, [`data`](Self::data) can be called to check the current state of the race.
 pub struct RaceContext<S: Send + Sync + ?Sized + 'static> {
     pub global_state: Arc<S>,
     pub(crate) data: Arc<RwLock<RaceData>>,
-    pub sender: Arc<Mutex<WsSink>>,
+    pub(crate) sender: Arc<Mutex<WsSink>>,
 }
 
 impl<S: Send + Sync + ?Sized + 'static> RaceContext<S> {
     /// Returns the current state of the race.
+    ///
+    /// See the type-level documentation for the semantics of using a [`RaceContext`] for an extended period of time.
     pub async fn data(&self) -> RwLockReadGuard<'_, RaceData> {
         self.data.read().await
     }
@@ -270,6 +276,7 @@ impl<S: Send + Sync + ?Sized + 'static> RaceContext<S> {
 }
 
 impl<S: Send + Sync + ?Sized + 'static> Clone for RaceContext<S> {
+    /// This is a cheap operation since this type is a wrapper around some [`Arc`]s. See the type-level documentation for the semantics of using a [`RaceContext`] for an extended period of time.
     fn clone(&self) -> Self {
         Self {
             global_state: Arc::clone(&self.global_state),
