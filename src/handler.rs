@@ -41,7 +41,7 @@ pub type WsSink = SplitSink<WebSocketStream<MaybeTlsStream<TcpStream>>, tungsten
 
 /// A type passed to [`RaceHandler`] callback methods which can be used to check the current status of the race or send messages.
 ///
-/// While a future returned from callback method is running, [`data`](Self::data) will not change and no other callbacks will be processed.
+/// While a future returned from a callback method is running, [`data`](Self::data) will not change and no other callbacks will be processed.
 /// [`Clone`] can be used to keep a value of this type past the end of a handler callback, e.g. by passing it into [`tokio::spawn`].
 /// If you do so, [`data`](Self::data) can be called to check the current state of the race.
 pub struct RaceContext<S: Send + Sync + ?Sized + 'static> {
