@@ -201,7 +201,7 @@ impl<S: Send + Sync + ?Sized + 'static> Bot<S> {
                     }
                 }
                 Ok(tungstenite::Message::Ping(payload)) => ctx.sender.lock().await.send(tungstenite::Message::Pong(payload)).await.map_err(|e| (e.into(), ErrorContext::Ping))?,
-                Ok(tungstenite::Message::Close(Some(tungstenite::protocol::CloseFrame { reason, .. }))) if reason == "CloudFlare WebSocket proxy restarting" => reconnect(
+                Ok(tungstenite::Message::Close(Some(tungstenite::protocol::CloseFrame { reason, .. }))) if matches!(&*reason, "CloudFlare WebSocket proxy restarting" | "keepalive ping timeout") => reconnect(
                     &mut last_network_error, &mut reconnect_wait_time, &mut stream, &ctx, data,
                     "WebSocket connection closed by server",
                 ).await.map_err(|e| (e, ErrorContext::Reconnect))?,
