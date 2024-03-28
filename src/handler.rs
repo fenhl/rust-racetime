@@ -371,19 +371,13 @@ pub trait RaceHandler<S: Send + Sync + ?Sized + 'static>: Send + Sized + 'static
     async fn chat_message(&mut self, ctx: &RaceContext<S>, message: ChatMessage) -> Result<(), Error> {
         if !message.is_bot && !message.is_system.unwrap_or(false /* Python duck typing strikes again */) && message.message.starts_with('!') {
             let data = ctx.data().await;
-            let can_monitor = message.user.as_ref().map_or(false, |sender|
+            let can_moderate = message.user.as_ref().map_or(false, |user| user.can_moderate);
+            let can_monitor = can_moderate || message.user.as_ref().map_or(false, |sender|
                 data.opened_by.as_ref().map_or(false, |creator| creator.id == sender.id) || data.monitors.iter().any(|monitor| monitor.id == sender.id)
             );
             if let Some(mut split) = shlex::split(&message.message[1..]) {
                 if !split.is_empty() {
-                    self.command(
-                        ctx,
-                        split.remove(0),
-                        split,
-                        message.user.as_ref().map_or(false, |user| user.can_moderate),
-                        can_monitor,
-                        &message,
-                    ).await?;
+                    self.command(ctx, split.remove(0), split, can_moderate, can_monitor, &message).await?;
                 }
             }
         }
