@@ -4,9 +4,6 @@
 //!
 //! For documentation, see also <https://github.com/racetimeGG/racetime-app/wiki/Category-bots>.
 
-#![deny(rust_2018_idioms, unused, unused_crate_dependencies, unused_import_braces, unused_qualifications, warnings)]
-#![forbid(unsafe_code)]
-
 use {
     std::{
         borrow::Cow,

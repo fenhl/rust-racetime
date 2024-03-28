@@ -9,6 +9,15 @@ license = "MIT"
 keywords = ["gg", "racetimegg", "category", "bot", "chat"]
 categories = ["api-bindings"]
 
+[lints.rust]
+rust_2018_idioms = "deny"
+unsafe_code = "deny"
+unused = "deny"
+unused_crate_dependencies = "deny"
+unused_import_braces = "deny"
+unused_qualifications = "deny"
+warnings = "deny"
+
 [dependencies]
 async-trait = "0.1"
 collect-mac = "0.1"
