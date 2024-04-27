@@ -107,6 +107,25 @@ impl<S: Send + Sync + ?Sized + 'static> RaceContext<S> {
         }).await
     }
 
+    /// Send a direct message only visible to its recipient.
+    ///
+    /// * `message` should be the message string you want to send.
+    /// * `direct_to` should be the hashid of the user.
+    pub async fn send_direct_message(&self, message: &str, direct_to: &str) -> Result<(), Error> {
+        #[serde_as]
+        #[derive(Serialize)]
+        struct Data<'a> {
+            message: &'a str,
+            direct_to: &'a str,
+            guid: Uuid,
+        }
+
+        self.send_raw("message", Data {
+            guid: Uuid::new_v4(),
+            message, direct_to,
+        }).await
+    }
+
     /// Pin a chat message.
     ///
     /// `message_id` should be the `id` field of a [`ChatMessage`].
