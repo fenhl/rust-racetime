@@ -1,6 +1,6 @@
 [package]
 name = "racetime"
-version = "0.21.3"
+version = "0.21.4"
 authors = ["Fenhl <fenhl@fenhl.net>"]
 edition = "2021"
 description = "racetime.gg category bot library"
@@ -24,7 +24,7 @@ chrono = { version = "0.4", default-features = false, features = ["serde"] }
 collect-mac = "0.1"
 futures = "0.3"
 http = "0.2" # transitive tokio-tungstenite dependency
-itertools = "0.12"
+itertools = "0.13"
 lazy-regex = "3"
 reqwest = { version = "0.12", default-features = false, features = ["charset", "http2", "json", "macos-system-configuration", "rustls-tls"] }
 serde = { version = "1", features = ["derive"] }

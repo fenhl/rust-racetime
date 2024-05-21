@@ -306,7 +306,7 @@ impl<S: Send + Sync + ?Sized + 'static> Clone for RaceContext<S> {
 }
 
 /// This trait should be implemented using the [`macro@async_trait`] attribute.
-#[async_trait]
+#[async_trait] // required because Rust's built-in async trait methods don't generate `Send` bounds
 pub trait RaceHandler<S: Send + Sync + ?Sized + 'static>: Send + Sized + 'static {
     /// Called when a new race room is found. If this returns [`false`], that race is ignored entirely.
     ///
