@@ -1,6 +1,6 @@
 [package]
 name = "racetime"
-version = "0.21.4"
+version = "0.21.5"
 authors = ["Fenhl <fenhl@fenhl.net>"]
 edition = "2021"
 description = "racetime.gg category bot library"
@@ -23,7 +23,7 @@ async-trait = "0.1"
 chrono = { version = "0.4", default-features = false, features = ["serde"] }
 collect-mac = "0.1"
 futures = "0.3"
-http = "0.2" # transitive tokio-tungstenite dependency
+http = "1"
 itertools = "0.13"
 lazy-regex = "3"
 reqwest = { version = "0.12", default-features = false, features = ["charset", "http2", "json", "macos-system-configuration", "rustls-tls"] }
@@ -33,6 +33,6 @@ serde_with = "3"
 shlex = "1"
 thiserror = "1"
 tokio = { version = "1", features = ["macros", "net", "rt", "sync", "time"] }
-tokio-tungstenite = { version = "0.20", features = ["rustls-tls-webpki-roots"] }
+tokio-tungstenite = { version = "0.21", features = ["rustls-tls-webpki-roots"] }
 url = { version = "2", features = ["serde"] }
 uuid = { version = "1", features = ["serde", "v4"] }
