@@ -1,6 +1,7 @@
 use {
     std::{
         borrow::Cow,
+        fmt,
         sync::Arc,
     },
     async_trait::async_trait,
@@ -13,6 +14,7 @@ use {
     },
     serde::Serialize,
     serde_with::{
+        DisplayFromStr,
         Map,
         serde_as,
     },
@@ -72,10 +74,12 @@ impl<S: Send + Sync + ?Sized + 'static> RaceContext<S> {
     /// Send a simple chat message to the race room.
     ///
     /// See [`send_message`](Self::send_message) for more options.
-    pub async fn say(&self, message: &str) -> Result<(), Error> {
+    pub async fn say(&self, message: impl fmt::Display) -> Result<(), Error> {
+        #[serde_as]
         #[derive(Serialize)]
-        struct Data<'a> {
-            message: &'a str,
+        struct Data<T: fmt::Display> {
+            #[serde_as(as = "DisplayFromStr")]
+            message: T,
             guid: Uuid,
         }
 
@@ -90,11 +94,12 @@ impl<S: Send + Sync + ?Sized + 'static> RaceContext<S> {
     /// * `message` should be the message string you want to send.
     /// * If `pinned` is set to true, the sent message will be automatically pinned.
     /// * If `actions` is provided, action buttons will appear below your message for users to click on. See [action buttons](https://github.com/racetimeGG/racetime-app/wiki/Category-bots#action-buttons) for more details.
-    pub async fn send_message(&self, message: &str, pinned: bool, actions: Vec<(&str, ActionButton)>) -> Result<(), Error> {
+    pub async fn send_message(&self, message: impl fmt::Display, pinned: bool, actions: Vec<(&str, ActionButton)>) -> Result<(), Error> {
         #[serde_as]
         #[derive(Serialize)]
-        struct Data<'a> {
-            message: &'a str,
+        struct Data<'a, T: fmt::Display> {
+            #[serde_as(as = "DisplayFromStr")]
+            message: T,
             pinned: bool,
             #[serde_as(as = "Map<_, _>")]
             actions: Vec<(&'a str, ActionButton)>,
