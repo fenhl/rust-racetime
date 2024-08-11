@@ -172,6 +172,7 @@ pub struct StartRace {
     pub invitational: bool,
     /// Bots always have permission to set this field.
     pub unlisted: bool,
+    pub ranked: bool,
     pub info_user: String,
     pub info_bot: String,
     pub require_even_teams: bool,
@@ -207,6 +208,7 @@ impl StartRace {
             "team_race" => form_bool(self.team_race),
             "invitational" => form_bool(self.invitational),
             "unlisted" => form_bool(self.unlisted),
+            "ranked" => form_bool(self.ranked),
             "info_user" => Cow::Borrowed(&*self.info_user),
             "info_bot" => Cow::Borrowed(&*self.info_bot),
             "require_even_teams" => form_bool(self.require_even_teams),

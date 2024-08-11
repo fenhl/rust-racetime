@@ -201,6 +201,7 @@ pub struct RaceData {
     pub started_at: Option<DateTime<Utc>>,
     pub ended_at: Option<DateTime<Utc>>,
     pub cancelled_at: Option<DateTime<Utc>>,
+    pub ranked: bool,
     pub unlisted: bool,
     #[serde(deserialize_with = "deserialize_django_uduration")]
     pub time_limit: UDuration,
