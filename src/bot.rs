@@ -38,6 +38,7 @@ use {
     crate::{
         Error,
         HostInfo,
+        ReqwestResponseExt as _,
         UDuration,
         authorize_with_host,
         handler::{
@@ -224,7 +225,7 @@ impl<S: Send + Sync + ?Sized + 'static> Bot<S> {
         let mut data = self.data.lock().await;
         if !data.handled_races.contains(name) {
             let race_data = match async { data.host_info.http_uri(data_url) }
-                .and_then(|url| async { Ok(self.client.get(url).send().await?.error_for_status()?.json().await?) })
+                .and_then(|url| async { Ok(self.client.get(url).send().await?.detailed_error_for_status().await?.json().await?) })
                 .await
             {
                 Ok(race_data) => race_data,
@@ -301,7 +302,7 @@ impl<S: Send + Sync + ?Sized + 'static> Bot<S> {
                         data.host_info.http_uri(&format!("/{}/data", &data.category_slug))
                     };
                     let data = match url
-                        .and_then(|url| async { Ok(self.client.get(url).send().await?.error_for_status()?.json::<CategoryData>().await?) })
+                        .and_then(|url| async { Ok(self.client.get(url).send().await?.detailed_error_for_status().await?.json::<CategoryData>().await?) })
                         .await
                     {
                         Ok(data) => data,

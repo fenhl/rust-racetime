@@ -38,6 +38,7 @@ pub enum Error {
     #[error(transparent)] InvalidHeaderValue(#[from] http::header::InvalidHeaderValue),
     #[error(transparent)] Io(#[from] std::io::Error),
     #[error(transparent)] Json(#[from] serde_json::Error),
+    #[error(transparent)] Reqwest(#[from] reqwest::Error),
     #[error(transparent)] Task(#[from] tokio::task::JoinError),
     #[error(transparent)] UrlParse(#[from] url::ParseError),
     #[error("websocket connection closed by the server")]
@@ -48,14 +49,37 @@ pub enum Error {
     LocationFormat,
     #[error("the startrace response did not include a location header")]
     MissingLocationHeader,
-    #[error("HTTP error{}: {0}", if let Some(url) = .0.url() { format!(" at {url}") } else { String::default() })]
-    Reqwest(#[from] reqwest::Error),
+    #[error("{inner}, body:\n\n{}", .text.as_ref().map(|text| text.clone()).unwrap_or_else(|e| e.to_string()))]
+    ResponseStatus {
+        #[source]
+        inner: reqwest::Error,
+        headers: reqwest::header::HeaderMap,
+        text: reqwest::Result<String>,
+    },
     #[error("server errors:{}", .0.into_iter().map(|msg| format!("\n• {msg}")).format(""))]
     Server(Vec<String>),
     #[error("WebSocket error: {0}")]
     Tungstenite(#[from] tokio_tungstenite::tungstenite::Error),
     #[error("expected text message from websocket, but received {0:?}")]
     UnexpectedMessageType(tokio_tungstenite::tungstenite::Message),
+}
+
+trait ReqwestResponseExt: Sized {
+    /// Like `error_for_status` but includes response headers and text in the error.
+    async fn detailed_error_for_status(self) -> Result<Self, Error>;
+}
+
+impl ReqwestResponseExt for reqwest::Response {
+    async fn detailed_error_for_status(self) -> Result<Self, Error> {
+        match self.error_for_status_ref() {
+            Ok(_) => Ok(self),
+            Err(inner) => Err(Error::ResponseStatus {
+                headers: self.headers().clone(),
+                text: self.text().await,
+                inner,
+            }),
+        }
+    }
 }
 
 /// A convenience trait for converting results to use this crate's [`Error`] type.
@@ -150,7 +174,7 @@ pub async fn authorize_with_host(host_info: &HostInfo, client_id: &str, client_s
             "grant_type" => "client_credentials",
         ])
         .send().await?
-        .error_for_status()?
+        .detailed_error_for_status().await?
         .json::<AuthResponse>().await?;
     Ok((
         data.access_token,
@@ -238,7 +262,7 @@ impl StartRace {
             .bearer_auth(access_token)
             .form(&self.form())
             .send().await?
-            .error_for_status()?;
+            .detailed_error_for_status().await?;
         let location = response
             .headers()
             .get("location").ok_or(Error::MissingLocationHeader)?
@@ -262,7 +286,7 @@ impl StartRace {
             .bearer_auth(access_token)
             .form(&self.form())
             .send().await?
-            .error_for_status()?;
+            .detailed_error_for_status().await?;
         Ok(())
     }
 }
