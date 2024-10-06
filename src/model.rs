@@ -30,6 +30,13 @@ pub enum Message {
     ChatMessage {
         message: ChatMessage,
     },
+    #[serde(rename = "chat.dm")]
+    ChatDm {
+        message: String,
+        from_user: Option<DmUser>,
+        from_bot: Option<String>,
+        to: DmUser,
+    },
     #[serde(rename = "chat.pin")]
     ChatPin {
         message: ChatMessage,
@@ -270,6 +277,14 @@ pub struct UserData {
     pub twitch_display_name: Option<String>,
     pub twitch_channel: Option<Url>,
     pub can_moderate: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct DmUser {
+    pub id: String,
+    pub full_name: String,
+    pub name: String,
+    pub discriminator: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]

@@ -408,6 +408,17 @@ pub trait RaceHandler<S: Send + Sync + ?Sized + 'static>: Send + Sized + 'static
         Ok(())
     }
 
+    /// Called when a `chat.dm` message is received.
+    ///
+    /// Equivalent to:
+    ///
+    /// ```ignore
+    /// async fn chat_dm(&mut self, _ctx: &RaceContext<S>, _message: String, _from_user: Option<DmUser>, _from_bot: Option<String>, _to: DmUser) -> Result<(), Error>;
+    /// ```
+    ///
+    /// The default implementation does nothing.
+    async fn chat_dm(&mut self, _ctx: &RaceContext<S>, _message: String, _from_user: Option<DmUser>, _from_bot: Option<String>, _to: DmUser) -> Result<(), Error> { Ok(()) }
+
     /// Called when a `chat.pin` message is received.
     ///
     /// Equivalent to:

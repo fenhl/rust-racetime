@@ -56,6 +56,7 @@ enum ErrorContext {
     ChatDelete,
     ChatHistory,
     ChatMessage,
+    ChatDm,
     ChatPin,
     ChatUnpin,
     ChatPurge,
@@ -79,6 +80,7 @@ impl fmt::Display for ErrorContext {
             Self::ChatDelete => write!(f, "from chat_delete callback"),
             Self::ChatHistory => write!(f, "from chat_history callback"),
             Self::ChatMessage => write!(f, "from chat_message callback"),
+            Self::ChatDm => write!(f, "from chat_dm callback"),
             Self::ChatPin => write!(f, "from chat_pin callback"),
             Self::ChatUnpin => write!(f, "from chat_unpin callback"),
             Self::ChatPurge => write!(f, "from chat_purge callback"),
@@ -184,6 +186,7 @@ impl<S: Send + Sync + ?Sized + 'static> Bot<S> {
                     match serde_json::from_str(&buf).map_err(|e| (e.into(), ErrorContext::Decode))? {
                         Message::ChatHistory { messages } => handler.chat_history(&ctx, messages).await.map_err(|e| (e, ErrorContext::ChatHistory))?,
                         Message::ChatMessage { message } => handler.chat_message(&ctx, message).await.map_err(|e| (e, ErrorContext::ChatMessage))?,
+                        Message::ChatDm { message, from_user, from_bot, to } => handler.chat_dm(&ctx, message, from_user, from_bot, to).await.map_err(|e| (e, ErrorContext::ChatDm))?,
                         Message::ChatPin { message } => handler.chat_pin(&ctx, message).await.map_err(|e| (e, ErrorContext::ChatPin))?,
                         Message::ChatUnpin { message } => handler.chat_unpin(&ctx, message).await.map_err(|e| (e, ErrorContext::ChatUnpin))?,
                         Message::ChatDelete { delete } => handler.chat_delete(&ctx, delete).await.map_err(|e| (e, ErrorContext::ChatDelete))?,
