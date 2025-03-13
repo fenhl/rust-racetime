@@ -279,6 +279,24 @@ pub struct UserData {
     pub can_moderate: bool,
 }
 
+/// The variant of user data returned from the `/user/{id}/data` endpoint.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct UserProfile {
+    pub id: String,
+    pub full_name: String,
+    pub name: String,
+    pub discriminator: Option<String>,
+    pub url: String,
+    pub avatar: Option<String>,
+    pub pronouns: Option<String>,
+    pub flair: String,
+    pub twitch_name: Option<String>,
+    pub twitch_display_name: Option<String>,
+    pub twitch_channel: Option<Url>,
+    pub can_moderate: bool,
+    pub teams: Vec<EntrantTeam>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct DmUser {
     pub id: String,
