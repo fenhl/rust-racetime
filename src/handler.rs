@@ -29,7 +29,10 @@ use {
     tokio_tungstenite::{
         MaybeTlsStream,
         WebSocketStream,
-        tungstenite,
+        tungstenite::{
+            self,
+            Utf8Bytes,
+        },
     },
     uuid::Uuid,
     crate::{
@@ -67,7 +70,7 @@ impl<S: Send + Sync + ?Sized + 'static> RaceContext<S> {
             data: T,
         }
 
-        self.sender.lock().await.send(tungstenite::Message::Text(serde_json::to_string(&RawMessage { action, data })?)).await?;
+        self.sender.lock().await.send(tungstenite::Message::Text(serde_json::to_string(&RawMessage { action, data })?.into())).await?;
         Ok(())
     }
 
@@ -192,25 +195,25 @@ impl<S: Send + Sync + ?Sized + 'static> RaceContext<S> {
 
     /// Set the room in an open state.
     pub async fn set_open(&self) -> Result<(), Error> {
-        self.sender.lock().await.send(tungstenite::Message::Text(format!("{{\"action\": \"make_open\"}}"))).await?;
+        self.sender.lock().await.send(tungstenite::Message::Text(Utf8Bytes::from_static("{\"action\":\"make_open\"}"))).await?;
         Ok(())
     }
 
     /// Set the room in an invite-only state.
     pub async fn set_invitational(&self) -> Result<(), Error> {
-        self.sender.lock().await.send(tungstenite::Message::Text(format!("{{\"action\": \"make_invitational\"}}"))).await?;
+        self.sender.lock().await.send(tungstenite::Message::Text(Utf8Bytes::from_static("{\"action\":\"make_invitational\"}"))).await?;
         Ok(())
     }
 
     /// Forces a start of the race.
     pub async fn force_start(&self) -> Result<(), Error> {
-        self.sender.lock().await.send(tungstenite::Message::Text(format!("{{\"action\": \"begin\"}}"))).await?;
+        self.sender.lock().await.send(tungstenite::Message::Text(Utf8Bytes::from_static("{\"action\":\"begin\"}"))).await?;
         Ok(())
     }
 
     /// Forcibly cancels a race.
     pub async fn cancel_race(&self) -> Result<(), Error> {
-        self.sender.lock().await.send(tungstenite::Message::Text(format!("{{\"action\": \"cancel\"}}"))).await?;
+        self.sender.lock().await.send(tungstenite::Message::Text(Utf8Bytes::from_static("{\"action\":\"cancel\"}"))).await?;
         Ok(())
     }
 

@@ -24,15 +24,15 @@ chrono = { version = "0.4", default-features = false, features = ["serde"] }
 collect-mac = "0.1"
 futures = "0.3"
 http = "1"
-itertools = "0.13"
+itertools = "0.14"
 lazy-regex = "3"
 reqwest = { version = "0.12", default-features = false, features = ["charset", "http2", "json", "macos-system-configuration", "rustls-tls"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = { package = "serde_json_path_to_error", version = "0.1" }
 serde_with = "3"
 shlex = "1"
-thiserror = "1"
+thiserror = "2"
 tokio = { version = "1", features = ["macros", "net", "rt", "sync", "time"] }
-tokio-tungstenite = { version = "0.21", features = ["rustls-tls-webpki-roots"] }
+tokio-tungstenite = { version = "0.26", features = ["rustls-tls-webpki-roots", "url"] }
 url = { version = "2", features = ["serde"] }
 uuid = { version = "1", features = ["serde", "v4"] }
