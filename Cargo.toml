@@ -2,7 +2,7 @@
 name = "racetime"
 version = "0.26.0"
 authors = ["Fenhl <fenhl@fenhl.net>"]
-edition = "2021"
+edition = "2024"
 description = "racetime.gg category bot library"
 repository = "https://github.com/fenhl/rust-racetime"
 license = "MIT"
