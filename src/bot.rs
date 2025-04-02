@@ -195,6 +195,9 @@ impl<S: Send + Sync + ?Sized + 'static> Bot<S> {
                         Message::Pong => handler.pong(&ctx).await.map_err(|e| (e, ErrorContext::Pong))?,
                         Message::RaceData { race } => {
                             let old_race_data = mem::replace(&mut *ctx.data.write().await, race);
+                            if handler.should_stop(&ctx).await.map_err(|e| (e, ErrorContext::ShouldStop))? {
+                                return handler.end(&ctx).await.map_err(|e| (e, ErrorContext::End))
+                            }
                             handler.race_data(&ctx, old_race_data).await.map_err(|e| (e, ErrorContext::RaceData))?;
                         }
                         Message::RaceRenders => handler.race_renders(&ctx).await.map_err(|e| (e, ErrorContext::RaceRenders))?,

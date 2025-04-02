@@ -348,7 +348,7 @@ pub trait RaceHandler<S: Send + Sync + ?Sized + 'static>: Send + Sized + 'static
         Ok(())
     }
 
-    /// Determine if the handler should be terminated. This is checked after every receieved message.
+    /// Determine if the handler should be terminated. This is checked after handling every receieved message, as well as before handling a `race_data` message.
     ///
     /// Equivalent to:
     ///
