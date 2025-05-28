@@ -36,6 +36,7 @@ use {
         client::IntoClientRequest as _,
     },
     crate::{
+        BotBuilder,
         Error,
         HostInfo,
         ReqwestResponseExt as _,
@@ -49,8 +50,6 @@ use {
         model::*,
     },
 };
-
-const SCAN_RACES_EVERY: UDuration = UDuration::from_secs(30);
 
 enum ErrorContext {
     ChatDelete,
@@ -116,18 +115,24 @@ pub struct Bot<S: Send + Sync + ?Sized + 'static> {
     state: Arc<S>,
     extra_room_tx: mpsc::Sender<String>,
     extra_room_rx: mpsc::Receiver<String>,
+    scan_races_every: UDuration,
 }
 
 impl<S: Send + Sync + ?Sized + 'static> Bot<S> {
     pub async fn new(category_slug: &str, client_id: &str, client_secret: &str, state: Arc<S>) -> Result<Self, Error> {
-        Self::new_with_host(HostInfo::default(), category_slug, client_id, client_secret, state).await
+        BotBuilder::new(category_slug, client_id, client_secret).state(state).build().await
     }
 
     pub async fn new_with_host(host_info: HostInfo, category_slug: &str, client_id: &str, client_secret: &str, state: Arc<S>) -> Result<Self, Error> {
-        let client = reqwest::Client::builder().user_agent(concat!("racetime-rs/", env!("CARGO_PKG_VERSION"))).build()?;
+        BotBuilder::new(category_slug, client_id, client_secret).state(state).host(host_info).build().await
+    }
+
+    pub(crate) async fn new_inner(builder: BotBuilder<'_, '_, '_, S>) -> Result<Self, Error> {
+        let BotBuilder { category_slug, client_id, client_secret, host_info, state, user_agent, scan_races_every } = builder;
+        let client = reqwest::Client::builder().user_agent(user_agent).build()?;
         let (access_token, reauthorize_every) = authorize_with_host(&host_info, client_id, client_secret, &client).await?;
         let (extra_room_tx, extra_room_rx) = mpsc::channel(1_024);
-        Ok(Bot {
+        Ok(Self {
             data: Arc::new(Mutex::new(BotData {
                 access_token, reauthorize_every,
                 handled_races: HashSet::default(),
@@ -136,7 +141,7 @@ impl<S: Send + Sync + ?Sized + 'static> Bot<S> {
                 client_secret: client_secret.to_owned(),
                 host_info,
             })),
-            client, state, extra_room_tx, extra_room_rx,
+            client, state, extra_room_tx, extra_room_rx, scan_races_every,
         })
     }
 
@@ -236,7 +241,7 @@ impl<S: Send + Sync + ?Sized + 'static> Bot<S> {
             {
                 Ok(race_data) => race_data,
                 Err(e) => {
-                    eprintln!("Fatal error when attempting to retrieve data for race {name} (retrying in {} seconds): {e:?}", SCAN_RACES_EVERY.as_secs_f64());
+                    eprintln!("Fatal error when attempting to retrieve data for race {name} (retrying in {} seconds): {e:?}", self.scan_races_every.as_secs_f64());
                     return Ok(())
                 }
             };
@@ -279,7 +284,7 @@ impl<S: Send + Sync + ?Sized + 'static> Bot<S> {
         // Divide the reauthorization interval by 2 to avoid token expiration
         let reauthorize_every = self.data.lock().await.reauthorize_every / 2;
         let mut reauthorize = interval_at(Instant::now() + reauthorize_every, reauthorize_every);
-        let mut refresh_races = interval(SCAN_RACES_EVERY);
+        let mut refresh_races = interval(self.scan_races_every);
         refresh_races.set_missed_tick_behavior(MissedTickBehavior::Delay);
         loop {
             tokio::select! {
@@ -296,7 +301,7 @@ impl<S: Send + Sync + ?Sized + 'static> Bot<S> {
                             // racetime.gg's auth endpoint has been known to return server errors intermittently, and we should also resist intermittent network errors.
                             // In those cases, we retry again after half the remaining lifetime of the current token, until that would exceed the rate limit.
                             let reauthorize_every = reauthorize.period() / 2;
-                            if reauthorize_every < SCAN_RACES_EVERY { return Err(Error::Reqwest(e)) }
+                            if reauthorize_every < self.scan_races_every { return Err(Error::Reqwest(e)) }
                             reauthorize = interval_at(Instant::now() + reauthorize_every, reauthorize_every);
                         }
                         Err(e) => return Err(e),
@@ -313,7 +318,7 @@ impl<S: Send + Sync + ?Sized + 'static> Bot<S> {
                     {
                         Ok(data) => data,
                         Err(e) => {
-                            eprintln!("Error when attempting to retrieve category data (retrying in {} seconds): {e:?}", SCAN_RACES_EVERY.as_secs_f64());
+                            eprintln!("Error when attempting to retrieve category data (retrying in {} seconds): {e:?}", self.scan_races_every.as_secs_f64());
                             continue
                         }
                     };

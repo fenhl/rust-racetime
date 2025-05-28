@@ -19,10 +19,12 @@ use {
 };
 pub use crate::{
     bot::Bot,
+    builder::BotBuilder,
     handler::RaceHandler,
 };
 
 pub mod bot;
+mod builder;
 pub mod handler;
 pub mod model;
 
