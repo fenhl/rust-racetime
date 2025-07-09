@@ -325,13 +325,14 @@ pub enum ActionButton {
 pub struct SurveyQuestion {
     pub name: String,
     pub label: String,
-    pub default: Option<String>,
+    pub default: Option<serde_json::Value>,
     #[serde(rename = "help")]
     pub help_text: Option<String>,
     #[serde(rename = "type")]
     pub kind: SurveyQuestionKind,
     pub placeholder: Option<String>,
     #[serde_as(as = "Map<_, _>")]
+    #[serde(default)]
     pub options: Vec<(String, String)>,
 }
 
