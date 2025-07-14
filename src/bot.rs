@@ -147,8 +147,9 @@ impl<S: Send + Sync + ?Sized + 'static> Bot<S> {
 
     /// Returns a sender that takes extra room slugs (e.g. as returned from [`crate::StartRace::start`]) and has the bot handle those rooms.
     ///
-    /// This can be used to have the bot handle unlisted rooms, which aren't detected automatically since they're not listed on the category detail API endpoint.
-    /// It can also be used to send listed rooms created by the bot to spawn the room handler immediately rather than waiting for the next check for new rooms.
+    /// This can be used to send known rooms to spawn their room handlers immediately rather than waiting for the next check for new rooms.
+    ///
+    /// In previous versions of this library, it was also necessary to use this in order to have unlisted rooms be handled. This is no longer the case since racetime.gg added an authorized API endpoint that includes unlisted rooms.
     pub fn extra_room_sender(&self) -> mpsc::Sender<String> {
         self.extra_room_tx.clone()
     }
@@ -308,12 +309,12 @@ impl<S: Send + Sync + ?Sized + 'static> Bot<S> {
                     }
                 }
                 _ = refresh_races.tick() => {
-                    let url = async {
+                    let request_builder = async {
                         let data = self.data.lock().await;
-                        data.host_info.http_uri(&format!("/{}/data", &data.category_slug))
+                        data.host_info.http_uri(&format!("/o/{}/data", &data.category_slug)).map(|url| self.client.get(url).bearer_auth(&data.access_token))
                     };
-                    let data = match url
-                        .and_then(|url| async { Ok(self.client.get(url).send().await?.detailed_error_for_status().await?.json::<CategoryData>().await?) })
+                    let data = match request_builder
+                        .and_then(|request_builder| async { Ok(request_builder.send().await?.detailed_error_for_status().await?.json::<CategoryData>().await?) })
                         .await
                     {
                         Ok(data) => data,
