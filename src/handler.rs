@@ -74,6 +74,18 @@ impl<S: Send + Sync + ?Sized + 'static> RaceContext<S> {
         Ok(())
     }
 
+    /// Request the race information. Implement [`RaceHandler::race_data`] to handle the response.
+    pub async fn get_race(&self) -> Result<(), Error> {
+        self.sender.lock().await.send(tungstenite::Message::Text(Utf8Bytes::from_static("{\"action\":\"getrace\"}"))).await?;
+        Ok(())
+    }
+
+    /// Request recent chat history. Implement [`RaceHandler::chat_history`] to handle the response.
+    pub async fn get_history(&self) -> Result<(), Error> {
+        self.sender.lock().await.send(tungstenite::Message::Text(Utf8Bytes::from_static("{\"action\":\"gethistory\"}"))).await?;
+        Ok(())
+    }
+
     /// Send a simple chat message to the race room.
     ///
     /// See [`send_message`](Self::send_message) for more options.
@@ -193,6 +205,16 @@ impl<S: Send + Sync + ?Sized + 'static> RaceContext<S> {
         }).await
     }
 
+    /// Update the `bot_meta` field on the race room's data.
+    ///
+    /// Each field of the `new_meta` parameter will be added, overriding an existing field of the same name if any.
+    /// Fields that are in the current `bot_meta` but not in the `new_meta` parameter will remain unchanged. Set a field to `null` to delete it.
+    ///
+    /// Note that the server will refuse to change the metadata if it would result in the JSON representation of the full `bot_meta` field exceeding 2048 characters in length.
+    pub async fn set_meta(&self, new_meta: serde_json::Map<String, serde_json::Value>) -> Result<(), Error> {
+        self.send_raw("setmeta", new_meta).await
+    }
+
     /// Set the room in an open state.
     pub async fn set_open(&self) -> Result<(), Error> {
         self.sender.lock().await.send(tungstenite::Message::Text(Utf8Bytes::from_static("{\"action\":\"make_open\"}"))).await?;
@@ -297,6 +319,20 @@ impl<S: Send + Sync + ?Sized + 'static> RaceContext<S> {
         }
 
         self.send_raw("remove_monitor", Data {
+            user,
+        }).await
+    }
+
+    /// Override an entrant's streaming requirement, allowing them to race without a live stream.
+    ///
+    /// `user` should be the hashid of the user.
+    pub async fn override_stream(&self, user: &str) -> Result<(), Error> {
+        #[derive(Serialize)]
+        struct Data<'a> {
+            user: &'a str,
+        }
+
+        self.send_raw("override_stream", Data {
             user,
         }).await
     }
