@@ -5,6 +5,7 @@ use {
         fmt,
         mem,
         sync::Arc,
+        time::Duration,
     },
     futures::{
         SinkExt as _,
@@ -29,6 +30,7 @@ use {
             interval,
             interval_at,
             sleep,
+            timeout,
         },
     },
     tokio_tungstenite::tungstenite::{
@@ -186,9 +188,9 @@ impl<S: Send + Sync + ?Sized + 'static> Bot<S> {
         let mut last_network_error = Instant::now();
         let mut reconnect_wait_time = UDuration::from_secs(1);
         let mut handler = H::new(&ctx).await.map_err(|e| (e, ErrorContext::New))?;
-        while let Some(msg_res) = stream.next().await {
-            match msg_res {
-                Ok(tungstenite::Message::Text(buf)) => {
+        loop {
+            match timeout(Duration::from_secs(60 * 60), stream.next()).await {
+                Ok(Some(Ok(tungstenite::Message::Text(buf)))) => {
                     match serde_json::from_str(&buf).map_err(|e| (e.into(), ErrorContext::Decode))? {
                         Message::ChatHistory { messages } => handler.chat_history(&ctx, messages).await.map_err(|e| (e, ErrorContext::ChatHistory))?,
                         Message::ChatMessage { message } => handler.chat_message(&ctx, message).await.map_err(|e| (e, ErrorContext::ChatMessage))?,
@@ -213,24 +215,30 @@ impl<S: Send + Sync + ?Sized + 'static> Bot<S> {
                         return handler.end(&ctx).await.map_err(|e| (e, ErrorContext::End))
                     }
                 }
-                Ok(tungstenite::Message::Ping(payload)) => ctx.sender.lock().await.send(tungstenite::Message::Pong(payload)).await.map_err(|e| (e.into(), ErrorContext::Ping))?,
-                Ok(tungstenite::Message::Close(Some(tungstenite::protocol::CloseFrame { reason, .. }))) if matches!(&*reason, "CloudFlare WebSocket proxy restarting" | "keepalive ping timeout") => reconnect(
+                Ok(Some(Ok(tungstenite::Message::Ping(payload)))) => ctx.sender.lock().await.send(tungstenite::Message::Pong(payload)).await.map_err(|e| (e.into(), ErrorContext::Ping))?,
+                Ok(Some(Ok(tungstenite::Message::Close(Some(tungstenite::protocol::CloseFrame { reason, .. }))))) if matches!(&*reason, "CloudFlare WebSocket proxy restarting" | "keepalive ping timeout") => reconnect(
                     &mut last_network_error, &mut reconnect_wait_time, &mut stream, &ctx, data,
                     "WebSocket connection closed by server",
                 ).await.map_err(|e| (e, ErrorContext::Reconnect))?,
-                Ok(msg) => return Err((Error::UnexpectedMessageType(msg), ErrorContext::Recv)),
-                Err(tungstenite::Error::Io(e)) if matches!(e.kind(), io::ErrorKind::ConnectionReset | io::ErrorKind::UnexpectedEof) => reconnect( //TODO other error kinds?
+                Ok(Some(Ok(msg))) => return Err((Error::UnexpectedMessageType(msg), ErrorContext::Recv)),
+                Ok(Some(Err(tungstenite::Error::Io(e)))) if matches!(e.kind(), io::ErrorKind::ConnectionReset | io::ErrorKind::UnexpectedEof) => reconnect( //TODO other error kinds?
                     &mut last_network_error, &mut reconnect_wait_time, &mut stream, &ctx, data,
                     "unexpected end of file while waiting for message form server",
                 ).await.map_err(|e| (e, ErrorContext::Reconnect))?,
-                Err(tungstenite::Error::Protocol(tungstenite::error::ProtocolError::ResetWithoutClosingHandshake)) => reconnect(
+                Ok(Some(Err(tungstenite::Error::Protocol(tungstenite::error::ProtocolError::ResetWithoutClosingHandshake)))) => reconnect(
                     &mut last_network_error, &mut reconnect_wait_time, &mut stream, &ctx, data,
                     "connection reset without closing handshake while waiting for message form server",
                 ).await.map_err(|e| (e, ErrorContext::Reconnect))?,
-                Err(e) => return Err((e.into(), ErrorContext::Recv)),
+                Ok(Some(Err(e))) => return Err((e.into(), ErrorContext::Recv)),
+                Ok(None) => return Err((Error::EndOfStream, ErrorContext::Recv)),
+                Err(tokio::time::error::Elapsed { .. }) => {
+                    // chat stops working 1 hour after race ends, allow the handler to stop then by periodically rechecking should_stop
+                    if handler.should_stop(&ctx).await.map_err(|e| (e, ErrorContext::ShouldStop))? {
+                        return handler.end(&ctx).await.map_err(|e| (e, ErrorContext::End))
+                    }
+                }
             }
         }
-        Err((Error::EndOfStream, ErrorContext::Recv))
     }
 
     async fn maybe_handle_race<H: RaceHandler<S>>(&self, name: &str, data_url: &str) -> Result<(), Error> {
