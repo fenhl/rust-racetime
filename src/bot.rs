@@ -215,7 +215,13 @@ impl<S: Send + Sync + ?Sized + 'static> Bot<S> {
                         return handler.end(&ctx).await.map_err(|e| (e, ErrorContext::End))
                     }
                 }
-                Ok(Some(Ok(tungstenite::Message::Ping(payload)))) => ctx.sender.lock().await.send(tungstenite::Message::Pong(payload)).await.map_err(|e| (e.into(), ErrorContext::Ping))?,
+                Ok(Some(Ok(tungstenite::Message::Ping(payload)))) => {
+                    ctx.sender.lock().await.send(tungstenite::Message::Pong(payload)).await.map_err(|e| (e.into(), ErrorContext::Ping))?;
+                    // chat stops working 1 hour after race ends, allow the handler to stop then by periodically rechecking should_stop
+                    if handler.should_stop(&ctx).await.map_err(|e| (e, ErrorContext::ShouldStop))? {
+                        return handler.end(&ctx).await.map_err(|e| (e, ErrorContext::End))
+                    }
+                }
                 Ok(Some(Ok(tungstenite::Message::Close(Some(tungstenite::protocol::CloseFrame { reason, .. }))))) if matches!(&*reason, "CloudFlare WebSocket proxy restarting" | "keepalive ping timeout") => reconnect(
                     &mut last_network_error, &mut reconnect_wait_time, &mut stream, &ctx, data,
                     "WebSocket connection closed by server",
@@ -223,11 +229,11 @@ impl<S: Send + Sync + ?Sized + 'static> Bot<S> {
                 Ok(Some(Ok(msg))) => return Err((Error::UnexpectedMessageType(msg), ErrorContext::Recv)),
                 Ok(Some(Err(tungstenite::Error::Io(e)))) if matches!(e.kind(), io::ErrorKind::ConnectionReset | io::ErrorKind::UnexpectedEof) => reconnect( //TODO other error kinds?
                     &mut last_network_error, &mut reconnect_wait_time, &mut stream, &ctx, data,
-                    "unexpected end of file while waiting for message form server",
+                    "unexpected end of file while waiting for message from server",
                 ).await.map_err(|e| (e, ErrorContext::Reconnect))?,
                 Ok(Some(Err(tungstenite::Error::Protocol(tungstenite::error::ProtocolError::ResetWithoutClosingHandshake)))) => reconnect(
                     &mut last_network_error, &mut reconnect_wait_time, &mut stream, &ctx, data,
-                    "connection reset without closing handshake while waiting for message form server",
+                    "connection reset without closing handshake while waiting for message from server",
                 ).await.map_err(|e| (e, ErrorContext::Reconnect))?,
                 Ok(Some(Err(e))) => return Err((e.into(), ErrorContext::Recv)),
                 Ok(None) => return Err((Error::EndOfStream, ErrorContext::Recv)),
