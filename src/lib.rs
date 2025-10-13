@@ -198,6 +198,10 @@ pub struct StartRace {
     pub invitational: bool,
     /// Bots always have permission to set this field.
     pub unlisted: bool,
+    /// Only available if category is opted-in to the 1v1 ladder beta.
+    pub partitionable: bool,
+    /// Only available if category is opted-in to the anonymised races beta.
+    pub hide_entrants: bool,
     pub ranked: bool,
     pub info_user: String,
     pub info_bot: String,
