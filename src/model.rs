@@ -135,7 +135,7 @@ pub struct Goal {
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct Entrant {
-    pub user: UserData,
+    pub user: MaybeAnonymizedUserData,
     pub status: EntrantStatus,
     #[serde(deserialize_with = "deserialize_opt_django_uduration")]
     pub finish_time: Option<UDuration>,
@@ -263,6 +263,34 @@ pub struct RaceSummary {
     pub time_limit: UDuration,
 }
 
+/// Can be converted into [`UserData`] using [`TryFrom`]/[`TryInto`].
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct MaybeAnonymizedUserData {
+    /// Will be empty for anonymized entrants
+    pub id: String,
+    /// Will be a randomly generated name for anonymized entrants
+    pub full_name: String,
+    /// Will be identical to `full_name` for anonymized entrants
+    pub name: String,
+    /// Will be `None` for anonymized entrants
+    pub discriminator: Option<String>,
+    /// Will be `None` for anonymized entrants
+    pub url: Option<String>,
+    /// Will be `None` for anonymized entrants
+    pub avatar: Option<String>,
+    /// Will be `None` for anonymized entrants
+    pub pronouns: Option<String>,
+    /// Will be empty for anonymized entrants
+    pub flair: String,
+    /// Will be `None` for anonymized entrants
+    pub twitch_name: Option<String>,
+    /// Will be `None` for anonymized entrants
+    pub twitch_display_name: Option<String>,
+    /// Will be `None` for anonymized entrants
+    pub twitch_channel: Option<Url>,
+    pub can_moderate: bool,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct UserData {
     pub id: String,
@@ -277,6 +305,32 @@ pub struct UserData {
     pub twitch_display_name: Option<String>,
     pub twitch_channel: Option<Url>,
     pub can_moderate: bool,
+}
+
+/// The error returned when attempting an anonymized [`MaybeAnonymizedUserData`] into [`UserData`] using [`TryFrom`]/[`TryInto`].
+#[derive(Debug, Clone, Copy, thiserror::Error)]
+#[error("entrant is anonymized")]
+pub struct AnonymousError;
+
+impl TryFrom<MaybeAnonymizedUserData> for UserData {
+    type Error = AnonymousError;
+
+    fn try_from(value: MaybeAnonymizedUserData) -> Result<Self, Self::Error> {
+        Ok(Self {
+            id: value.id,
+            full_name: value.full_name,
+            name: value.name,
+            discriminator: value.discriminator,
+            url: value.url.ok_or(AnonymousError)?,
+            avatar: value.avatar,
+            pronouns: value.pronouns,
+            flair: value.flair,
+            twitch_name: value.twitch_name,
+            twitch_display_name: value.twitch_display_name,
+            twitch_channel: value.twitch_channel,
+            can_moderate: value.can_moderate,
+        })
+    }
 }
 
 /// The variant of user data returned from the `/user/{id}/data` endpoint.

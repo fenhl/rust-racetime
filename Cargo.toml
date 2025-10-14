@@ -1,6 +1,6 @@
 [package]
 name = "racetime"
-version = "0.28.0"
+version = "0.29.0"
 authors = ["Fenhl <fenhl@fenhl.net>"]
 edition = "2024"
 description = "racetime.gg category bot library"
