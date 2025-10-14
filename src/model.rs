@@ -212,6 +212,8 @@ pub struct RaceData {
     pub unlisted: bool,
     #[serde(deserialize_with = "deserialize_django_uduration")]
     pub time_limit: UDuration,
+    pub time_limit_auto_complete: bool,
+    pub require_even_teams: bool,
     pub streaming_required: bool,
     pub auto_start: bool,
     pub opened_by: Option<UserData>,
@@ -219,12 +221,16 @@ pub struct RaceData {
     pub recordable: bool,
     pub recorded: bool,
     pub recorded_by: Option<UserData>,
+    pub disqualify_unready: bool,
     pub allow_comments: bool,
     pub hide_comments: bool,
+    pub hide_entrants: bool,
+    pub chat_restricted: bool,
     pub allow_midrace_chat: bool,
     pub allow_non_entrant_chat: bool,
     #[serde(deserialize_with = "deserialize_django_uduration")]
     pub chat_message_delay: UDuration,
+    pub bot_meta: serde_json::Map<String, serde_json::Value>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
