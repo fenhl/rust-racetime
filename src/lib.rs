@@ -184,8 +184,8 @@ pub async fn authorize_with_host(host_info: &HostInfo, client_id: &str, client_s
     ))
 }
 
-fn form_bool(value: bool) -> Cow<'static, str> {
-    Cow::Borrowed(if value { "true" } else { "false" })
+fn form_bool(value: &bool) -> Cow<'static, str> {
+    Cow::Borrowed(if *value { "true" } else { "false" })
 }
 
 pub struct StartRace {
@@ -230,29 +230,52 @@ pub struct StartRace {
 
 impl StartRace {
     fn form(&self) -> BTreeMap<&'static str, Cow<'_, str>> {
-        let start_delay = self.start_delay.to_string();
-        let time_limit = self.time_limit.to_string();
-        let chat_message_delay = self.chat_message_delay.to_string();
+        let Self {
+            goal,
+            goal_is_custom,
+            team_race,
+            invitational,
+            unlisted,
+            partitionable,
+            hide_entrants,
+            ranked,
+            info_user,
+            info_bot,
+            require_even_teams,
+            start_delay,
+            time_limit,
+            time_limit_auto_complete,
+            streaming_required,
+            auto_start,
+            allow_comments,
+            hide_comments,
+            allow_prerace_chat,
+            allow_midrace_chat,
+            allow_non_entrant_chat,
+            chat_message_delay,
+        } = self;
         collect![
-            if self.goal_is_custom { "custom_goal" } else { "goal" } => Cow::Borrowed(&*self.goal),
-            "team_race" => form_bool(self.team_race),
-            "invitational" => form_bool(self.invitational),
-            "unlisted" => form_bool(self.unlisted),
-            "ranked" => form_bool(self.ranked),
-            "info_user" => Cow::Borrowed(&*self.info_user),
-            "info_bot" => Cow::Borrowed(&*self.info_bot),
-            "require_even_teams" => form_bool(self.require_even_teams),
-            "start_delay" => Cow::Owned(start_delay),
-            "time_limit" => Cow::Owned(time_limit),
-            "time_limit_auto_complete" => form_bool(self.time_limit_auto_complete),
-            "streaming_required" => form_bool(self.streaming_required),
-            "auto_start" => form_bool(self.auto_start),
-            "allow_comments" => form_bool(self.allow_comments),
-            "hide_comments" => form_bool(self.hide_comments),
-            "allow_prerace_chat" => form_bool(self.allow_prerace_chat),
-            "allow_midrace_chat" => form_bool(self.allow_midrace_chat),
-            "allow_non_entrant_chat" => form_bool(self.allow_non_entrant_chat),
-            "chat_message_delay" => Cow::Owned(chat_message_delay),
+            if *goal_is_custom { "custom_goal" } else { "goal" } => Cow::Borrowed(&**goal),
+            "team_race" => form_bool(team_race),
+            "invitational" => form_bool(invitational),
+            "unlisted" => form_bool(unlisted),
+            "partitionable" => form_bool(partitionable),
+            "hide_entrants" => form_bool(hide_entrants),
+            "ranked" => form_bool(ranked),
+            "info_user" => Cow::Borrowed(&**info_user),
+            "info_bot" => Cow::Borrowed(&**info_bot),
+            "require_even_teams" => form_bool(require_even_teams),
+            "start_delay" => Cow::Owned(start_delay.to_string()),
+            "time_limit" => Cow::Owned(time_limit.to_string()),
+            "time_limit_auto_complete" => form_bool(time_limit_auto_complete),
+            "streaming_required" => form_bool(streaming_required),
+            "auto_start" => form_bool(auto_start),
+            "allow_comments" => form_bool(allow_comments),
+            "hide_comments" => form_bool(hide_comments),
+            "allow_prerace_chat" => form_bool(allow_prerace_chat),
+            "allow_midrace_chat" => form_bool(allow_midrace_chat),
+            "allow_non_entrant_chat" => form_bool(allow_non_entrant_chat),
+            "chat_message_delay" => Cow::Owned(chat_message_delay.to_string()),
         ]
     }
 
