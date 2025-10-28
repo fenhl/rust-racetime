@@ -135,7 +135,8 @@ pub struct Goal {
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct Entrant {
-    pub user: MaybeAnonymizedUserData,
+    /// `None` for deleted users.
+    pub user: Option<MaybeAnonymizedUserData>,
     pub status: EntrantStatus,
     #[serde(deserialize_with = "deserialize_opt_django_uduration")]
     pub finish_time: Option<UDuration>,
