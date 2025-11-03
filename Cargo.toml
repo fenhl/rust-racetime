@@ -1,6 +1,6 @@
 [package]
 name = "racetime"
-version = "0.31.0"
+version = "0.32.0"
 authors = ["Fenhl <fenhl@fenhl.net>"]
 edition = "2024"
 description = "racetime.gg category bot library"
@@ -33,6 +33,6 @@ serde_with = "3"
 shlex = "1"
 thiserror = "2"
 tokio = { version = "1", features = ["macros", "net", "rt", "sync", "time"] }
-tokio-tungstenite = { version = "0.27", features = ["rustls-tls-webpki-roots", "url"] }
+tokio-tungstenite = { version = "0.28", features = ["rustls-tls-webpki-roots", "url"] }
 url = { version = "2", features = ["serde"] }
 uuid = { version = "1", features = ["serde", "v4"] }
