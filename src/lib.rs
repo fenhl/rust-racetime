@@ -11,7 +11,6 @@ use {
         num::NonZeroU16,
     },
     collect_mac::collect,
-    itertools::Itertools as _,
     lazy_regex::regex_captures,
     serde::Deserialize,
     tokio::net::ToSocketAddrs,
@@ -32,73 +31,6 @@ const RACETIME_HOST: &str = "racetime.gg";
 
 /// An unsigned duration. This is a reexport of [`std::time::Duration`].
 pub type UDuration = std::time::Duration;
-
-#[derive(Debug, thiserror::Error)]
-pub enum Error {
-    #[error(transparent)] Custom(#[from] Box<dyn std::error::Error + Send + Sync>),
-    #[error(transparent)] HeaderToStr(#[from] reqwest::header::ToStrError),
-    #[error(transparent)] InvalidHeaderValue(#[from] http::header::InvalidHeaderValue),
-    #[error(transparent)] Io(#[from] std::io::Error),
-    #[error(transparent)] Json(#[from] serde_json::Error),
-    #[error(transparent)] Reqwest(#[from] reqwest::Error),
-    #[error(transparent)] Task(#[from] tokio::task::JoinError),
-    #[error(transparent)] UrlParse(#[from] url::ParseError),
-    #[error("websocket connection closed by the server")]
-    EndOfStream,
-    #[error("the startrace location did not match the input category")]
-    LocationCategory,
-    #[error("the startrace location header did not have the expected format")]
-    LocationFormat,
-    #[error("the startrace response did not include a location header")]
-    MissingLocationHeader,
-    #[error("{inner}, body:\n\n{}", .text.as_ref().map(|text| text.clone()).unwrap_or_else(|e| e.to_string()))]
-    ResponseStatus {
-        #[source]
-        inner: reqwest::Error,
-        headers: reqwest::header::HeaderMap,
-        text: reqwest::Result<String>,
-    },
-    #[error("server errors:{}", .0.into_iter().map(|msg| format!("\n• {msg}")).format(""))]
-    Server(Vec<String>),
-    #[error("WebSocket error: {0}")]
-    Tungstenite(#[from] tokio_tungstenite::tungstenite::Error),
-    #[error("expected text message from websocket, but received {0:?}")]
-    UnexpectedMessageType(tokio_tungstenite::tungstenite::Message),
-}
-
-trait ReqwestResponseExt: Sized {
-    /// Like `error_for_status` but includes response headers and text in the error.
-    async fn detailed_error_for_status(self) -> Result<Self, Error>;
-}
-
-impl ReqwestResponseExt for reqwest::Response {
-    async fn detailed_error_for_status(self) -> Result<Self, Error> {
-        match self.error_for_status_ref() {
-            Ok(_) => Ok(self),
-            Err(inner) => Err(Error::ResponseStatus {
-                headers: self.headers().clone(),
-                text: self.text().await,
-                inner,
-            }),
-        }
-    }
-}
-
-/// A convenience trait for converting results to use this crate's [`Error`] type.
-pub trait ResultExt {
-    type Ok;
-
-    /// Convert the error to this crate's [`Error`] type using the [`Error::Custom`] variant.
-    fn to_racetime(self) -> Result<Self::Ok, Error>;
-}
-
-impl<T, E: std::error::Error + Send + Sync + 'static> ResultExt for Result<T, E> {
-    type Ok = T;
-
-    fn to_racetime(self) -> Result<T, Error> {
-        self.map_err(|e| Error::Custom(Box::new(e)))
-    }
-}
 
 #[derive(Debug, Clone)]
 pub struct HostInfo {
@@ -128,11 +60,11 @@ impl HostInfo {
             false => "ws",
         }
     }
-    fn http_uri(&self, url: &str) -> Result<Url, Error>  {
+    fn http_uri(&self, url: &str) -> Result<Url, url::ParseError>  {
         uri(self.http_protocol(), &self.hostname, self.port, url)
     }
 
-    fn websocket_uri(&self, url: &str) -> Result<Url, Error> {
+    fn websocket_uri(&self, url: &str) -> Result<Url, url::ParseError> {
         uri(self.websocket_protocol(), &self.hostname, self.port, url)
     }
 
@@ -153,31 +85,50 @@ impl Default for HostInfo {
 }
 
 /// Generate a URI from the given protocol and URL path fragment.
-fn uri(proto: &str, host: &str, port: NonZeroU16, url: &str) -> Result<Url, Error> {
+fn uri(proto: &str, host: &str, port: NonZeroU16, url: &str) -> Result<Url, url::ParseError> {
     Ok(format!("{proto}://{host}:{port}{url}").parse()?)
 }
 
+#[derive(Debug, thiserror::Error)]
+pub enum AuthError {
+    #[error(transparent)] Http(#[from] reqwest::Error),
+    #[error(transparent)] Url(#[from] url::ParseError),
+    #[error("{inner}, body:\n\n{}", .text.as_ref().map(|text| text.clone()).unwrap_or_else(|e| e.to_string()))]
+    ResponseStatus {
+        #[source]
+        inner: reqwest::Error,
+        headers: reqwest::header::HeaderMap,
+        text: reqwest::Result<String>,
+    },
+}
+
 /// Get an OAuth2 token from the authentication server.
-pub async fn authorize(client_id: &str, client_secret: &str, client: &reqwest::Client) -> Result<(String, UDuration), Error> {
+pub async fn authorize(client_id: &str, client_secret: &str, client: &reqwest::Client) -> Result<(String, UDuration), AuthError> {
     authorize_with_host(&HostInfo::default(), client_id, client_secret, client).await
 }
 
-pub async fn authorize_with_host(host_info: &HostInfo, client_id: &str, client_secret: &str, client: &reqwest::Client) -> Result<(String, UDuration), Error> {
+pub async fn authorize_with_host(host_info: &HostInfo, client_id: &str, client_secret: &str, client: &reqwest::Client) -> Result<(String, UDuration), AuthError> {
     #[derive(Deserialize)]
     struct AuthResponse {
         access_token: String,
         expires_in: Option<u64>,
     }
 
-    let data = client.post(host_info.http_uri("/o/token")?)
+    let response = client.post(host_info.http_uri("/o/token")?)
         .form(&collect![as BTreeMap<_, _>:
             "client_id" => client_id,
             "client_secret" => client_secret,
             "grant_type" => "client_credentials",
         ])
-        .send().await?
-        .detailed_error_for_status().await?
-        .json::<AuthResponse>().await?;
+        .send().await?;
+    let data = match response.error_for_status_ref() {
+        Ok(_) => response.json::<AuthResponse>().await?,
+        Err(inner) => return Err(AuthError::ResponseStatus {
+            headers: response.headers().clone(),
+            text: response.text().await,
+            inner,
+        }),
+    };
     Ok((
         data.access_token,
         UDuration::from_secs(data.expires_in.unwrap_or(36000)),
@@ -226,6 +177,39 @@ pub struct StartRace {
     pub allow_non_entrant_chat: bool,
     /// Number of seconds to hold a message for before displaying it. Doesn't affect race monitors or moderators. Must be in `0..=90`.
     pub chat_message_delay: u8,
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum StartError {
+    #[error(transparent)] HeaderToStr(#[from] reqwest::header::ToStrError),
+    #[error(transparent)] Http(#[from] reqwest::Error),
+    #[error(transparent)] Url(#[from] url::ParseError),
+    #[error("the startrace location did not match the input category")]
+    LocationCategory,
+    #[error("the startrace location header did not have the expected format")]
+    LocationFormat,
+    #[error("the startrace response did not include a location header")]
+    MissingLocationHeader,
+    #[error("{inner}, body:\n\n{}", .text.as_ref().map(|text| text.clone()).unwrap_or_else(|e| e.to_string()))]
+    ResponseStatus {
+        #[source]
+        inner: reqwest::Error,
+        headers: reqwest::header::HeaderMap,
+        text: reqwest::Result<String>,
+    },
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum EditError {
+    #[error(transparent)] Http(#[from] reqwest::Error),
+    #[error(transparent)] Url(#[from] url::ParseError),
+    #[error("{inner}, body:\n\n{}", .text.as_ref().map(|text| text.clone()).unwrap_or_else(|e| e.to_string()))]
+    ResponseStatus {
+        #[source]
+        inner: reqwest::Error,
+        headers: reqwest::header::HeaderMap,
+        text: reqwest::Result<String>,
+    },
 }
 
 impl StartRace {
@@ -282,22 +266,28 @@ impl StartRace {
     /// Creates a race room with the specified configuration and returns its slug.
     ///
     /// An access token can be obtained using [`authorize`].
-    pub async fn start(&self, access_token: &str, client: &reqwest::Client, category: &str) -> Result<String, Error> {
+    pub async fn start(&self, access_token: &str, client: &reqwest::Client, category: &str) -> Result<String, StartError> {
         self.start_with_host(&HostInfo::default(), access_token, client, category).await
     }
 
-    pub async fn start_with_host(&self, host_info: &HostInfo, access_token: &str, client: &reqwest::Client, category: &str) -> Result<String, Error> {
+    pub async fn start_with_host(&self, host_info: &HostInfo, access_token: &str, client: &reqwest::Client, category: &str) -> Result<String, StartError> {
         let response = client.post(host_info.http_uri(&format!("/o/{category}/startrace"))?)
             .bearer_auth(access_token)
             .form(&self.form())
-            .send().await?
-            .detailed_error_for_status().await?;
+            .send().await?;
+        if let Err(inner) = response.error_for_status_ref() {
+            return Err(StartError::ResponseStatus {
+                headers: response.headers().clone(),
+                text: response.text().await,
+                inner,
+            })
+        }
         let location = response
             .headers()
-            .get("location").ok_or(Error::MissingLocationHeader)?
+            .get("location").ok_or(StartError::MissingLocationHeader)?
             .to_str()?;
-        let (_, location_category, slug) = regex_captures!("^/([^/]+)/([^/]+)$", location).ok_or(Error::LocationFormat)?;
-        if location_category != category { return Err(Error::LocationCategory) }
+        let (_, location_category, slug) = regex_captures!("^/([^/]+)/([^/]+)$", location).ok_or(StartError::LocationFormat)?;
+        if location_category != category { return Err(StartError::LocationCategory) }
         Ok(slug.to_owned())
     }
 
@@ -306,16 +296,22 @@ impl StartRace {
     /// Due to a limitation of the racetime.gg API, all fields including ones that should remain the same must be specified.
     ///
     /// An access token can be obtained using [`authorize`].
-    pub async fn edit(&self, access_token: &str, client: &reqwest::Client, category: &str, race_slug: &str) -> Result<(), Error> {
+    pub async fn edit(&self, access_token: &str, client: &reqwest::Client, category: &str, race_slug: &str) -> Result<(), EditError> {
         self.edit_with_host(&HostInfo::default(), access_token, client, category, race_slug).await
     }
 
-    pub async fn edit_with_host(&self, host_info: &HostInfo, access_token: &str, client: &reqwest::Client, category: &str, race_slug: &str) -> Result<(), Error> {
-        client.post(host_info.http_uri(&format!("/o/{category}/{race_slug}/edit"))?)
+    pub async fn edit_with_host(&self, host_info: &HostInfo, access_token: &str, client: &reqwest::Client, category: &str, race_slug: &str) -> Result<(), EditError> {
+        let response = client.post(host_info.http_uri(&format!("/o/{category}/{race_slug}/edit"))?)
             .bearer_auth(access_token)
             .form(&self.form())
-            .send().await?
-            .detailed_error_for_status().await?;
-        Ok(())
+            .send().await?;
+        match response.error_for_status_ref() {
+            Ok(_) => Ok(()),
+            Err(inner) => Err(EditError::ResponseStatus {
+                headers: response.headers().clone(),
+                text: response.text().await,
+                inner,
+            }),
+        }
     }
 }

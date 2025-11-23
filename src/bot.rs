@@ -38,10 +38,9 @@ use {
         client::IntoClientRequest as _,
     },
     crate::{
+        AuthError,
         BotBuilder,
-        Error,
         HostInfo,
-        ReqwestResponseExt as _,
         UDuration,
         authorize_with_host,
         handler::{
@@ -53,7 +52,8 @@ use {
     },
 };
 
-enum ErrorContext {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HandleErrorContext {
     ChatDelete,
     ChatHistory,
     ChatMessage,
@@ -75,7 +75,7 @@ enum ErrorContext {
     ShouldStop,
 }
 
-impl fmt::Display for ErrorContext {
+impl fmt::Display for HandleErrorContext {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::ChatDelete => write!(f, "from chat_delete callback"),
@@ -101,6 +101,58 @@ impl fmt::Display for ErrorContext {
     }
 }
 
+#[derive(Debug, thiserror::Error)]
+pub enum HandleErrorKind<H> {
+    #[error(transparent)] Handler(H),
+    #[error(transparent)] InvalidHeaderValue(#[from] http::header::InvalidHeaderValue),
+    #[error(transparent)] Json(#[from] serde_json::Error),
+    #[error(transparent)] Url(#[from] url::ParseError),
+    #[error(transparent)] WebSocket(#[from] tungstenite::Error),
+    #[error("failed to connect to WebSocket endpoint: {0}")]
+    Connect(#[source] io::Error),
+    #[error("websocket connection closed by the server")]
+    EndOfStream,
+    #[error("expected text message from websocket, but received {0:?}")]
+    UnexpectedMessageType(tungstenite::Message),
+}
+
+#[derive(Debug, thiserror::Error)]
+#[error("{ctx}: {source}")]
+pub struct HandleError<H> {
+    pub ctx: HandleErrorContext,
+    pub source: HandleErrorKind<H>,
+}
+
+trait HandleResultExt<H> {
+    type Ok;
+
+    fn at(self, ctx: HandleErrorContext) -> Result<Self::Ok, HandleError<H>>;
+}
+
+impl<H, T, E: Into<HandleErrorKind<H>>> HandleResultExt<H> for Result<T, E> {
+    type Ok = T;
+
+    fn at(self, ctx: HandleErrorContext) -> Result<T, HandleError<H>> {
+        self.map_err(|e| HandleError { ctx, source: e.into() })
+    }
+}
+
+trait HandlerResultExt {
+    type Ok;
+    type Err;
+
+    fn h_at(self, ctx: HandleErrorContext) -> Result<Self::Ok, HandleError<Self::Err>>;
+}
+
+impl<T, E> HandlerResultExt for Result<T, E> {
+    type Ok = T;
+    type Err = E;
+
+    fn h_at(self, ctx: HandleErrorContext) -> Result<T, HandleError<E>> {
+        self.map_err(|e| HandleError { ctx, source: HandleErrorKind::Handler(e) })
+    }
+}
+
 struct BotData {
     host_info: HostInfo,
     category_slug: String,
@@ -120,16 +172,35 @@ pub struct Bot<S: Send + Sync + ?Sized + 'static> {
     scan_races_every: UDuration,
 }
 
+#[derive(Debug, thiserror::Error)]
+pub enum RunError<H> {
+    #[error(transparent)] Auth(#[from] AuthError),
+    #[error(transparent)] Handler(H),
+    #[error(transparent)] Http(#[from] reqwest::Error),
+    #[error(transparent)] InvalidHeaderValue(#[from] http::header::InvalidHeaderValue),
+    #[error(transparent)] Url(#[from] url::ParseError),
+    #[error(transparent)] WebSocket(#[from] tungstenite::Error),
+    #[error("failed to connect to WebSocket endpoint: {0}")]
+    Connect(#[source] io::Error),
+    #[error("{inner}, body:\n\n{}", .text.as_ref().map(|text| text.clone()).unwrap_or_else(|e| e.to_string()))]
+    ResponseStatus {
+        #[source]
+        inner: reqwest::Error,
+        headers: reqwest::header::HeaderMap,
+        text: reqwest::Result<String>,
+    },
+}
+
 impl<S: Send + Sync + ?Sized + 'static> Bot<S> {
-    pub async fn new(category_slug: &str, client_id: &str, client_secret: &str, state: Arc<S>) -> Result<Self, Error> {
+    pub async fn new(category_slug: &str, client_id: &str, client_secret: &str, state: Arc<S>) -> Result<Self, AuthError> {
         BotBuilder::new(category_slug, client_id, client_secret).state(state).build().await
     }
 
-    pub async fn new_with_host(host_info: HostInfo, category_slug: &str, client_id: &str, client_secret: &str, state: Arc<S>) -> Result<Self, Error> {
+    pub async fn new_with_host(host_info: HostInfo, category_slug: &str, client_id: &str, client_secret: &str, state: Arc<S>) -> Result<Self, AuthError> {
         BotBuilder::new(category_slug, client_id, client_secret).state(state).host(host_info).build().await
     }
 
-    pub(crate) async fn new_inner(builder: BotBuilder<'_, '_, '_, S>) -> Result<Self, Error> {
+    pub(crate) async fn new_inner(builder: BotBuilder<'_, '_, '_, S>) -> Result<Self, AuthError> {
         let BotBuilder { category_slug, client_id, client_secret, host_info, state, user_agent, scan_races_every } = builder;
         let client = reqwest::Client::builder().user_agent(user_agent).build()?;
         let (access_token, reauthorize_every) = authorize_with_host(&host_info, client_id, client_secret, &client).await?;
@@ -158,8 +229,8 @@ impl<S: Send + Sync + ?Sized + 'static> Bot<S> {
 
     /// Low-level handler for the race room. Loops over the websocket,
     /// calling the appropriate method for each message that comes in.
-    async fn handle<H: RaceHandler<S>>(mut stream: WsStream, ctx: RaceContext<S>, data: &Mutex<BotData>) -> Result<(), (Error, ErrorContext)> {
-        async fn reconnect<S: Send + Sync + ?Sized>(last_network_error: &mut Instant, reconnect_wait_time: &mut UDuration, stream: &mut WsStream, ctx: &RaceContext<S>, data: &Mutex<BotData>, reason: &str) -> Result<(), Error> {
+    async fn handle<H: RaceHandler<S>>(mut stream: WsStream, ctx: RaceContext<S>, data: &Mutex<BotData>) -> Result<(), HandleError<H::Error>> {
+        async fn reconnect<S: Send + Sync + ?Sized, E>(last_network_error: &mut Instant, reconnect_wait_time: &mut UDuration, stream: &mut WsStream, ctx: &RaceContext<S>, data: &Mutex<BotData>, reason: &str) -> Result<(), HandleErrorKind<E>> {
             let ws_conn = loop {
                 if last_network_error.elapsed() >= UDuration::from_secs(60 * 60 * 24) {
                     *reconnect_wait_time = UDuration::from_secs(1); // reset wait time after no crash for a day
@@ -175,7 +246,7 @@ impl<S: Send + Sync + ?Sized + 'static> Bot<S> {
                     http::header::HeaderName::from_static("authorization"),
                     format!("Bearer {}", data.access_token).parse::<http::header::HeaderValue>()?,
                 );
-                match tokio_tungstenite::client_async_tls(request, TcpStream::connect(data.host_info.websocket_socketaddrs()).await?).await {
+                match tokio_tungstenite::client_async_tls(request, TcpStream::connect(data.host_info.websocket_socketaddrs()).await.map_err(HandleErrorKind::Connect)?).await {
                     Ok((ws_conn, _)) => break ws_conn,
                     Err(tungstenite::Error::Http(response)) if response.status().is_server_error() => continue,
                     Err(e) => return Err(e.into()),
@@ -187,71 +258,82 @@ impl<S: Send + Sync + ?Sized + 'static> Bot<S> {
 
         let mut last_network_error = Instant::now();
         let mut reconnect_wait_time = UDuration::from_secs(1);
-        let mut handler = H::new(&ctx).await.map_err(|e| (e, ErrorContext::New))?;
+        let mut handler = H::new(&ctx).await.h_at(HandleErrorContext::New)?;
         loop {
             match timeout(Duration::from_secs(60 * 60), stream.next()).await {
                 Ok(Some(Ok(tungstenite::Message::Text(buf)))) => {
-                    match serde_json::from_str(&buf).map_err(|e| (e.into(), ErrorContext::Decode))? {
-                        Message::ChatHistory { messages } => handler.chat_history(&ctx, messages).await.map_err(|e| (e, ErrorContext::ChatHistory))?,
-                        Message::ChatMessage { message } => handler.chat_message(&ctx, message).await.map_err(|e| (e, ErrorContext::ChatMessage))?,
-                        Message::ChatDm { message, from_user, from_bot, to } => handler.chat_dm(&ctx, message, from_user, from_bot, to).await.map_err(|e| (e, ErrorContext::ChatDm))?,
-                        Message::ChatPin { message } => handler.chat_pin(&ctx, message).await.map_err(|e| (e, ErrorContext::ChatPin))?,
-                        Message::ChatUnpin { message } => handler.chat_unpin(&ctx, message).await.map_err(|e| (e, ErrorContext::ChatUnpin))?,
-                        Message::ChatDelete { delete } => handler.chat_delete(&ctx, delete).await.map_err(|e| (e, ErrorContext::ChatDelete))?,
-                        Message::ChatPurge { purge } => handler.chat_purge(&ctx, purge).await.map_err(|e| (e, ErrorContext::ChatPurge))?,
-                        Message::Error { errors } => handler.error(&ctx, errors).await.map_err(|e| (e, ErrorContext::ServerError))?,
-                        Message::Pong => handler.pong(&ctx).await.map_err(|e| (e, ErrorContext::Pong))?,
+                    match serde_json::from_str(&buf).at(HandleErrorContext::Decode)? {
+                        Message::ChatHistory { messages } => handler.chat_history(&ctx, messages).await.h_at(HandleErrorContext::ChatHistory)?,
+                        Message::ChatMessage { message } => handler.chat_message(&ctx, message).await.h_at(HandleErrorContext::ChatMessage)?,
+                        Message::ChatDm { message, from_user, from_bot, to } => handler.chat_dm(&ctx, message, from_user, from_bot, to).await.h_at(HandleErrorContext::ChatDm)?,
+                        Message::ChatPin { message } => handler.chat_pin(&ctx, message).await.h_at(HandleErrorContext::ChatPin)?,
+                        Message::ChatUnpin { message } => handler.chat_unpin(&ctx, message).await.h_at(HandleErrorContext::ChatUnpin)?,
+                        Message::ChatDelete { delete } => handler.chat_delete(&ctx, delete).await.h_at(HandleErrorContext::ChatDelete)?,
+                        Message::ChatPurge { purge } => handler.chat_purge(&ctx, purge).await.h_at(HandleErrorContext::ChatPurge)?,
+                        Message::Error { errors } => handler.error(&ctx, errors).await.h_at(HandleErrorContext::ServerError)?,
+                        Message::Pong => handler.pong(&ctx).await.h_at(HandleErrorContext::Pong)?,
                         Message::RaceData { race } => {
                             let old_race_data = mem::replace(&mut *ctx.data.write().await, race);
-                            if handler.should_stop(&ctx).await.map_err(|e| (e, ErrorContext::ShouldStop))? {
-                                return handler.end(&ctx).await.map_err(|e| (e, ErrorContext::End))
+                            if handler.should_stop(&ctx).await.h_at(HandleErrorContext::ShouldStop)? {
+                                return handler.end(&ctx).await.h_at(HandleErrorContext::End)
                             }
-                            handler.race_data(&ctx, old_race_data).await.map_err(|e| (e, ErrorContext::RaceData))?;
+                            handler.race_data(&ctx, old_race_data).await.h_at(HandleErrorContext::RaceData)?;
                         }
-                        Message::RaceRenders => handler.race_renders(&ctx).await.map_err(|e| (e, ErrorContext::RaceRenders))?,
-                        Message::RaceSplit => handler.race_split(&ctx).await.map_err(|e| (e, ErrorContext::RaceSplit))?,
+                        Message::RaceRenders => handler.race_renders(&ctx).await.h_at(HandleErrorContext::RaceRenders)?,
+                        Message::RaceSplit => handler.race_split(&ctx).await.h_at(HandleErrorContext::RaceSplit)?,
                     }
-                    if handler.should_stop(&ctx).await.map_err(|e| (e, ErrorContext::ShouldStop))? {
-                        return handler.end(&ctx).await.map_err(|e| (e, ErrorContext::End))
+                    if handler.should_stop(&ctx).await.h_at(HandleErrorContext::ShouldStop)? {
+                        return handler.end(&ctx).await.h_at(HandleErrorContext::End)
                     }
                 }
                 Ok(Some(Ok(tungstenite::Message::Ping(payload)))) => {
-                    ctx.sender.lock().await.send(tungstenite::Message::Pong(payload)).await.map_err(|e| (e.into(), ErrorContext::Ping))?;
+                    ctx.sender.lock().await.send(tungstenite::Message::Pong(payload)).await.at(HandleErrorContext::Ping)?;
                     // chat stops working 1 hour after race ends, allow the handler to stop then by periodically rechecking should_stop
-                    if handler.should_stop(&ctx).await.map_err(|e| (e, ErrorContext::ShouldStop))? {
-                        return handler.end(&ctx).await.map_err(|e| (e, ErrorContext::End))
+                    if handler.should_stop(&ctx).await.h_at(HandleErrorContext::ShouldStop)? {
+                        return handler.end(&ctx).await.h_at(HandleErrorContext::End)
                     }
                 }
                 Ok(Some(Ok(tungstenite::Message::Close(Some(tungstenite::protocol::CloseFrame { reason, .. }))))) if matches!(&*reason, "CloudFlare WebSocket proxy restarting" | "keepalive ping timeout") => reconnect(
                     &mut last_network_error, &mut reconnect_wait_time, &mut stream, &ctx, data,
                     "WebSocket connection closed by server",
-                ).await.map_err(|e| (e, ErrorContext::Reconnect))?,
-                Ok(Some(Ok(msg))) => return Err((Error::UnexpectedMessageType(msg), ErrorContext::Recv)),
+                ).await.at(HandleErrorContext::Reconnect)?,
+                Ok(Some(Ok(msg))) => return Err(HandleErrorKind::UnexpectedMessageType(msg)).at(HandleErrorContext::Recv),
                 Ok(Some(Err(tungstenite::Error::Io(e)))) if matches!(e.kind(), io::ErrorKind::ConnectionReset | io::ErrorKind::UnexpectedEof) => reconnect( //TODO other error kinds?
                     &mut last_network_error, &mut reconnect_wait_time, &mut stream, &ctx, data,
                     "unexpected end of file while waiting for message from server",
-                ).await.map_err(|e| (e, ErrorContext::Reconnect))?,
+                ).await.at(HandleErrorContext::Reconnect)?,
                 Ok(Some(Err(tungstenite::Error::Protocol(tungstenite::error::ProtocolError::ResetWithoutClosingHandshake)))) => reconnect(
                     &mut last_network_error, &mut reconnect_wait_time, &mut stream, &ctx, data,
                     "connection reset without closing handshake while waiting for message from server",
-                ).await.map_err(|e| (e, ErrorContext::Reconnect))?,
-                Ok(Some(Err(e))) => return Err((e.into(), ErrorContext::Recv)),
-                Ok(None) => return Err((Error::EndOfStream, ErrorContext::Recv)),
+                ).await.at(HandleErrorContext::Reconnect)?,
+                Ok(Some(Err(e))) => return Err(e).at(HandleErrorContext::Recv),
+                Ok(None) => return Err(HandleErrorKind::EndOfStream).at(HandleErrorContext::Recv),
                 Err(tokio::time::error::Elapsed { .. }) => {
                     // chat stops working 1 hour after race ends, allow the handler to stop then by periodically rechecking should_stop
-                    if handler.should_stop(&ctx).await.map_err(|e| (e, ErrorContext::ShouldStop))? {
-                        return handler.end(&ctx).await.map_err(|e| (e, ErrorContext::End))
+                    if handler.should_stop(&ctx).await.h_at(HandleErrorContext::ShouldStop)? {
+                        return handler.end(&ctx).await.h_at(HandleErrorContext::End)
                     }
                 }
             }
         }
     }
 
-    async fn maybe_handle_race<H: RaceHandler<S>>(&self, name: &str, data_url: &str) -> Result<(), Error> {
+    async fn maybe_handle_race<H: RaceHandler<S>>(&self, name: &str, data_url: &str) -> Result<(), RunError<H::Error>> {
         let mut data = self.data.lock().await;
         if !data.handled_races.contains(name) {
             let race_data = match async { data.host_info.http_uri(data_url) }
-                .and_then(|url| async { Ok(self.client.get(url).send().await?.detailed_error_for_status().await?.json().await?) })
+                .err_into::<RunError<H::Error>>()
+                .and_then(|url| async {
+                    let response = self.client.get(url).send().await?;
+                    match response.error_for_status_ref() {
+                        Ok(_) => Ok(response.json().await?),
+                        Err(inner) => Err(RunError::ResponseStatus {
+                            headers: response.headers().clone(),
+                            text: response.text().await,
+                            inner,
+                        }),
+                    }
+                })
                 .await
             {
                 Ok(race_data) => race_data,
@@ -260,11 +342,11 @@ impl<S: Send + Sync + ?Sized + 'static> Bot<S> {
                     return Ok(())
                 }
             };
-            if H::should_handle(&race_data, Arc::clone(&self.state)).await? {
+            if H::should_handle(&race_data, Arc::clone(&self.state)).await.map_err(RunError::Handler)? {
                 let mut request = data.host_info.websocket_uri(&race_data.websocket_bot_url)?.into_client_request()?;
                 request.headers_mut().append(http::header::HeaderName::from_static("authorization"), format!("Bearer {}", data.access_token).parse()?);
                 let (ws_conn, _) = tokio_tungstenite::client_async_tls(
-                    request, TcpStream::connect(data.host_info.websocket_socketaddrs()).await?,
+                    request, TcpStream::connect(data.host_info.websocket_socketaddrs()).await.map_err(RunError::Connect)?,
                 ).await?;
                 data.handled_races.insert(name.to_owned());
                 drop(data);
@@ -278,23 +360,22 @@ impl<S: Send + Sync + ?Sized + 'static> Bot<S> {
                 let name = name.to_owned();
                 let data_clone = Arc::clone(&self.data);
                 H::task(Arc::clone(&self.state), race_data, tokio::spawn(async move {
-                    if let Err((e, ctx)) = Self::handle::<H>(stream, ctx, &data_clone).await {
-                        panic!("error in race handler {ctx}: {e} ({e:?})")
-                    }
+                    Self::handle::<H>(stream, ctx, &data_clone).await?;
                     data_clone.lock().await.handled_races.remove(&name);
-                })).await?;
+                    Ok(())
+                })).await.map_err(RunError::Handler)?;
             }
         }
         Ok(())
     }
 
     /// Run the bot. Requires an active [`tokio`] runtime.
-    pub async fn run<H: RaceHandler<S>>(self) -> Result<Never, Error> {
+    pub async fn run<H: RaceHandler<S>>(self) -> Result<Never, RunError<H::Error>> {
         self.run_until::<H, _, _>(future::pending()).await
     }
 
     /// Run the bot until the `shutdown` future resolves. Requires an active [`tokio`] runtime. `shutdown` must be cancel safe.
-    pub async fn run_until<H: RaceHandler<S>, T, Fut: Future<Output = T>>(mut self, shutdown: Fut) -> Result<T, Error> {
+    pub async fn run_until<H: RaceHandler<S>, T, Fut: Future<Output = T>>(mut self, shutdown: Fut) -> Result<T, RunError<H::Error>> {
         tokio::pin!(shutdown);
         // Divide the reauthorization interval by 2 to avoid token expiration
         let reauthorize_every = self.data.lock().await.reauthorize_every / 2;
@@ -312,14 +393,14 @@ impl<S: Send + Sync + ?Sized + 'static> Bot<S> {
                             data.reauthorize_every = reauthorize_every;
                             reauthorize = interval_at(Instant::now() + reauthorize_every / 2, reauthorize_every / 2);
                         }
-                        Err(Error::Reqwest(e)) if e.status().map_or(true, |status| status.is_server_error()) => {
+                        Err(AuthError::Http(e)) if e.status().map_or(true, |status| status.is_server_error()) => {
                             // racetime.gg's auth endpoint has been known to return server errors intermittently, and we should also resist intermittent network errors.
                             // In those cases, we retry again after half the remaining lifetime of the current token, until that would exceed the rate limit.
                             let reauthorize_every = reauthorize.period() / 2;
-                            if reauthorize_every < self.scan_races_every { return Err(Error::Reqwest(e)) }
+                            if reauthorize_every < self.scan_races_every { return Err(AuthError::Http(e).into()) }
                             reauthorize = interval_at(Instant::now() + reauthorize_every, reauthorize_every);
                         }
-                        Err(e) => return Err(e),
+                        Err(e) => return Err(e.into()),
                     }
                 }
                 _ = refresh_races.tick() => {
@@ -328,7 +409,18 @@ impl<S: Send + Sync + ?Sized + 'static> Bot<S> {
                         data.host_info.http_uri(&format!("/o/{}/data", &data.category_slug)).map(|url| self.client.get(url).bearer_auth(&data.access_token))
                     };
                     let data = match request_builder
-                        .and_then(|request_builder| async { Ok(request_builder.send().await?.detailed_error_for_status().await?.json::<CategoryData>().await?) })
+                        .err_into::<RunError<H::Error>>()
+                        .and_then(|request_builder| async {
+                            let response = request_builder.send().await?;
+                            match response.error_for_status_ref() {
+                                Ok(_) => Ok(response.json::<CategoryData>().await?),
+                                Err(inner) => Err(RunError::ResponseStatus {
+                                    headers: response.headers().clone(),
+                                    text: response.text().await,
+                                    inner,
+                                }),
+                            }
+                        })
                         .await
                     {
                         Ok(data) => data,

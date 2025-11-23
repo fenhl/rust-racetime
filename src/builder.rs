@@ -1,8 +1,8 @@
 use {
     std::sync::Arc,
     crate::{
+        AuthError,
         Bot,
-        Error,
         HostInfo,
         UDuration,
     },
@@ -51,7 +51,7 @@ impl<S: Send + Sync + ?Sized + 'static> BotBuilder<'_, '_, '_, S> {
         Self { scan_races_every, ..self }
     }
 
-    pub async fn build(self) -> Result<Bot<S>, Error> {
+    pub async fn build(self) -> Result<Bot<S>, AuthError> {
         Bot::new_inner(self).await
     }
 }

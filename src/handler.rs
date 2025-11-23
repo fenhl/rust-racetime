@@ -12,6 +12,7 @@ use {
             SplitStream,
         },
     },
+    itertools::Itertools as _,
     serde::Serialize,
     serde_with::{
         DisplayFromStr,
@@ -35,10 +36,7 @@ use {
         },
     },
     uuid::Uuid,
-    crate::{
-        Error,
-        model::*,
-    },
+    crate::model::*,
 };
 
 pub type WsStream = SplitStream<WebSocketStream<MaybeTlsStream<TcpStream>>>;
@@ -55,6 +53,12 @@ pub struct RaceContext<S: Send + Sync + ?Sized + 'static> {
     pub(crate) sender: Arc<Mutex<WsSink>>,
 }
 
+#[derive(Debug, thiserror::Error)]
+pub enum SendError {
+    #[error(transparent)] Serialize(#[from] serde_json::Error),
+    #[error(transparent)] WebSocket(#[from] tungstenite::Error),
+}
+
 impl<S: Send + Sync + ?Sized + 'static> RaceContext<S> {
     /// Returns the current state of the race.
     ///
@@ -63,7 +67,7 @@ impl<S: Send + Sync + ?Sized + 'static> RaceContext<S> {
         self.data.read().await
     }
 
-    async fn send_raw(&self, action: &'static str, data: impl Serialize) -> Result<(), Error> {
+    async fn send_raw(&self, action: &'static str, data: impl Serialize) -> Result<(), SendError> {
         #[derive(Serialize)]
         struct RawMessage<T> {
             action: &'static str,
@@ -75,21 +79,19 @@ impl<S: Send + Sync + ?Sized + 'static> RaceContext<S> {
     }
 
     /// Request the race information. Implement [`RaceHandler::race_data`] to handle the response.
-    pub async fn get_race(&self) -> Result<(), Error> {
-        self.sender.lock().await.send(tungstenite::Message::Text(Utf8Bytes::from_static("{\"action\":\"getrace\"}"))).await?;
-        Ok(())
+    pub async fn get_race(&self) -> tungstenite::Result<()> {
+        self.sender.lock().await.send(tungstenite::Message::Text(Utf8Bytes::from_static("{\"action\":\"getrace\"}"))).await
     }
 
     /// Request recent chat history. Implement [`RaceHandler::chat_history`] to handle the response.
-    pub async fn get_history(&self) -> Result<(), Error> {
-        self.sender.lock().await.send(tungstenite::Message::Text(Utf8Bytes::from_static("{\"action\":\"gethistory\"}"))).await?;
-        Ok(())
+    pub async fn get_history(&self) -> tungstenite::Result<()> {
+        self.sender.lock().await.send(tungstenite::Message::Text(Utf8Bytes::from_static("{\"action\":\"gethistory\"}"))).await
     }
 
     /// Send a simple chat message to the race room.
     ///
     /// See [`send_message`](Self::send_message) for more options.
-    pub async fn say(&self, message: impl fmt::Display) -> Result<(), Error> {
+    pub async fn say(&self, message: impl fmt::Display) -> Result<(), SendError> {
         #[serde_as]
         #[derive(Serialize)]
         struct Data<T: fmt::Display> {
@@ -109,7 +111,7 @@ impl<S: Send + Sync + ?Sized + 'static> RaceContext<S> {
     /// * `message` should be the message string you want to send.
     /// * If `pinned` is set to true, the sent message will be automatically pinned.
     /// * If `actions` is provided, action buttons will appear below your message for users to click on. See [action buttons](https://github.com/racetimeGG/racetime-app/wiki/Category-bots#action-buttons) for more details.
-    pub async fn send_message(&self, message: impl fmt::Display, pinned: bool, actions: Vec<(&str, ActionButton)>) -> Result<(), Error> {
+    pub async fn send_message(&self, message: impl fmt::Display, pinned: bool, actions: Vec<(&str, ActionButton)>) -> Result<(), SendError> {
         #[serde_as]
         #[derive(Serialize)]
         struct Data<'a, T: fmt::Display> {
@@ -131,7 +133,7 @@ impl<S: Send + Sync + ?Sized + 'static> RaceContext<S> {
     ///
     /// * `message` should be the message string you want to send.
     /// * `direct_to` should be the hashid of the user.
-    pub async fn send_direct_message(&self, message: &str, direct_to: &str) -> Result<(), Error> {
+    pub async fn send_direct_message(&self, message: &str, direct_to: &str) -> Result<(), SendError> {
         #[serde_as]
         #[derive(Serialize)]
         struct Data<'a> {
@@ -149,7 +151,7 @@ impl<S: Send + Sync + ?Sized + 'static> RaceContext<S> {
     /// Pin a chat message.
     ///
     /// `message_id` should be the `id` field of a [`ChatMessage`].
-    pub async fn pin_message(&self, message_id: &str) -> Result<(), Error> {
+    pub async fn pin_message(&self, message_id: &str) -> Result<(), SendError> {
         #[derive(Serialize)]
         struct Data<'a> {
             message: &'a str,
@@ -163,7 +165,7 @@ impl<S: Send + Sync + ?Sized + 'static> RaceContext<S> {
     /// Unpin a chat message.
     ///
     /// `message_id` should be the `id` field of a [`ChatMessage`].
-    pub async fn unpin_message(&self, message_id: &str) -> Result<(), Error> {
+    pub async fn unpin_message(&self, message_id: &str) -> Result<(), SendError> {
         #[derive(Serialize)]
         struct Data<'a> {
             message: &'a str,
@@ -175,7 +177,7 @@ impl<S: Send + Sync + ?Sized + 'static> RaceContext<S> {
     }
 
     /// Set the `info_bot` field on the race room's data.
-    pub async fn set_bot_raceinfo(&self, info: &str) -> Result<(), Error> {
+    pub async fn set_bot_raceinfo(&self, info: &str) -> Result<(), SendError> {
         #[derive(Serialize)]
         struct Data<'a> {
             info_bot: &'a str,
@@ -189,7 +191,7 @@ impl<S: Send + Sync + ?Sized + 'static> RaceContext<S> {
     /// Set the `info_user` field on the race room's data.
     ///
     /// `info` should be the information you wish to set, and `pos` the behavior in case there is existing info.
-    pub async fn set_user_raceinfo(&self, info: &str, pos: RaceInfoPos) -> Result<(), Error> {
+    pub async fn set_user_raceinfo(&self, info: &str, pos: RaceInfoPos) -> Result<(), SendError> {
         #[derive(Serialize)]
         struct Data<'a> {
             info_user: Cow<'a, str>,
@@ -211,38 +213,34 @@ impl<S: Send + Sync + ?Sized + 'static> RaceContext<S> {
     /// Fields that are in the current `bot_meta` but not in the `new_meta` parameter will remain unchanged. Set a field to `null` to delete it.
     ///
     /// Note that the server will refuse to change the metadata if it would result in the JSON representation of the full `bot_meta` field exceeding 2048 characters in length.
-    pub async fn set_meta(&self, new_meta: serde_json::Map<String, serde_json::Value>) -> Result<(), Error> {
+    pub async fn set_meta(&self, new_meta: serde_json::Map<String, serde_json::Value>) -> Result<(), SendError> {
         self.send_raw("setmeta", new_meta).await
     }
 
     /// Set the room in an open state.
-    pub async fn set_open(&self) -> Result<(), Error> {
-        self.sender.lock().await.send(tungstenite::Message::Text(Utf8Bytes::from_static("{\"action\":\"make_open\"}"))).await?;
-        Ok(())
+    pub async fn set_open(&self) -> tungstenite::Result<()> {
+        self.sender.lock().await.send(tungstenite::Message::Text(Utf8Bytes::from_static("{\"action\":\"make_open\"}"))).await
     }
 
     /// Set the room in an invite-only state.
-    pub async fn set_invitational(&self) -> Result<(), Error> {
-        self.sender.lock().await.send(tungstenite::Message::Text(Utf8Bytes::from_static("{\"action\":\"make_invitational\"}"))).await?;
-        Ok(())
+    pub async fn set_invitational(&self) -> tungstenite::Result<()> {
+        self.sender.lock().await.send(tungstenite::Message::Text(Utf8Bytes::from_static("{\"action\":\"make_invitational\"}"))).await
     }
 
     /// Forces a start of the race.
-    pub async fn force_start(&self) -> Result<(), Error> {
-        self.sender.lock().await.send(tungstenite::Message::Text(Utf8Bytes::from_static("{\"action\":\"begin\"}"))).await?;
-        Ok(())
+    pub async fn force_start(&self) -> tungstenite::Result<()> {
+        self.sender.lock().await.send(tungstenite::Message::Text(Utf8Bytes::from_static("{\"action\":\"begin\"}"))).await
     }
 
     /// Forcibly cancels a race.
-    pub async fn cancel_race(&self) -> Result<(), Error> {
-        self.sender.lock().await.send(tungstenite::Message::Text(Utf8Bytes::from_static("{\"action\":\"cancel\"}"))).await?;
-        Ok(())
+    pub async fn cancel_race(&self) -> tungstenite::Result<()> {
+        self.sender.lock().await.send(tungstenite::Message::Text(Utf8Bytes::from_static("{\"action\":\"cancel\"}"))).await
     }
 
     /// Invites a user to the race.
     ///
     /// `user` should be the hashid of the user.
-    pub async fn invite_user(&self, user: &str) -> Result<(), Error> {
+    pub async fn invite_user(&self, user: &str) -> Result<(), SendError> {
         #[derive(Serialize)]
         struct Data<'a> {
             user: &'a str,
@@ -256,7 +254,7 @@ impl<S: Send + Sync + ?Sized + 'static> RaceContext<S> {
     /// Accepts a request to join the race room.
     ///
     /// `user` should be the hashid of the user.
-    pub async fn accept_request(&self, user: &str) -> Result<(), Error> {
+    pub async fn accept_request(&self, user: &str) -> Result<(), SendError> {
         #[derive(Serialize)]
         struct Data<'a> {
             user: &'a str,
@@ -270,7 +268,7 @@ impl<S: Send + Sync + ?Sized + 'static> RaceContext<S> {
     /// Forcibly unreadies an entrant.
     ///
     /// `user` should be the hashid of the user.
-    pub async fn force_unready(&self, user: &str) -> Result<(), Error> {
+    pub async fn force_unready(&self, user: &str) -> Result<(), SendError> {
         #[derive(Serialize)]
         struct Data<'a> {
             user: &'a str,
@@ -284,7 +282,7 @@ impl<S: Send + Sync + ?Sized + 'static> RaceContext<S> {
     /// Forcibly removes an entrant from the race.
     ///
     /// `user` should be the hashid of the user.
-    pub async fn remove_entrant(&self, user: &str) -> Result<(), Error> {
+    pub async fn remove_entrant(&self, user: &str) -> Result<(), SendError> {
         #[derive(Serialize)]
         struct Data<'a> {
             user: &'a str,
@@ -298,7 +296,7 @@ impl<S: Send + Sync + ?Sized + 'static> RaceContext<S> {
     /// Adds a user as a race monitor.
     ///
     /// `user` should be the hashid of the user.
-    pub async fn add_monitor(&self, user: &str) -> Result<(), Error> {
+    pub async fn add_monitor(&self, user: &str) -> Result<(), SendError> {
         #[derive(Serialize)]
         struct Data<'a> {
             user: &'a str,
@@ -312,7 +310,7 @@ impl<S: Send + Sync + ?Sized + 'static> RaceContext<S> {
     /// Removes a user as a race monitor.
     ///
     /// `user` should be the hashid of the user.
-    pub async fn remove_monitor(&self, user: &str) -> Result<(), Error> {
+    pub async fn remove_monitor(&self, user: &str) -> Result<(), SendError> {
         #[derive(Serialize)]
         struct Data<'a> {
             user: &'a str,
@@ -326,7 +324,7 @@ impl<S: Send + Sync + ?Sized + 'static> RaceContext<S> {
     /// Override an entrant's streaming requirement, allowing them to race without a live stream.
     ///
     /// `user` should be the hashid of the user.
-    pub async fn override_stream(&self, user: &str) -> Result<(), Error> {
+    pub async fn override_stream(&self, user: &str) -> Result<(), SendError> {
         #[derive(Serialize)]
         struct Data<'a> {
             user: &'a str,
@@ -349,9 +347,15 @@ impl<S: Send + Sync + ?Sized + 'static> Clone for RaceContext<S> {
     }
 }
 
+#[derive(Debug, thiserror::Error)]
+#[error("server errors:{}", .0.into_iter().map(|msg| format!("\n• {msg}")).format(""))]
+pub struct ServerErrors(pub Vec<String>);
+
 /// This trait should be implemented using the [`macro@async_trait`] attribute.
 #[async_trait] // required because Rust's built-in async trait methods don't generate `Send` bounds
 pub trait RaceHandler<S: Send + Sync + ?Sized + 'static>: Send + Sized + 'static {
+    type Error: From<ServerErrors> + fmt::Debug + fmt::Display + Send;
+
     /// Called when a new race room is found. If this returns [`false`], that race is ignored entirely.
     ///
     /// Equivalent to:
@@ -361,7 +365,7 @@ pub trait RaceHandler<S: Send + Sync + ?Sized + 'static>: Send + Sized + 'static
     /// ```
     ///
     /// The default implementation returns [`true`] for any race whose status value is neither [`finished`](RaceStatusValue::Finished) nor [`cancelled`](RaceStatusValue::Cancelled).
-    async fn should_handle(race_data: &RaceData, _state: Arc<S>) -> Result<bool, Error> {
+    async fn should_handle(race_data: &RaceData, _state: Arc<S>) -> Result<bool, Self::Error> {
         Ok(!matches!(race_data.status.value, RaceStatusValue::Finished | RaceStatusValue::Cancelled))
     }
 
@@ -374,7 +378,7 @@ pub trait RaceHandler<S: Send + Sync + ?Sized + 'static>: Send + Sized + 'static
     /// ```
     ///
     /// The `RaceHandler` this returns will receive events for that race.
-    async fn new(ctx: &RaceContext<S>) -> Result<Self, Error>;
+    async fn new(ctx: &RaceContext<S>) -> Result<Self, Self::Error>;
 
     /// Called for each chat message that starts with `!` and was not sent by the system or a bot.
     ///
@@ -383,7 +387,7 @@ pub trait RaceHandler<S: Send + Sync + ?Sized + 'static>: Send + Sized + 'static
     /// ```ignore
     /// async fn command(&mut self: _ctx: &RaceContext<S>, _cmd_name: String, _args: Vec<String>, _is_moderator: bool, _is_monitor: bool, _msg: &ChatMessage) -> Result<(), Error>;
     /// ```
-    async fn command(&mut self, _ctx: &RaceContext<S>, _cmd_name: String, _args: Vec<String>, _is_moderator: bool, _is_monitor: bool, _msg: &ChatMessage) -> Result<(), Error> {
+    async fn command(&mut self, _ctx: &RaceContext<S>, _cmd_name: String, _args: Vec<String>, _is_moderator: bool, _is_monitor: bool, _msg: &ChatMessage) -> Result<(), Self::Error> {
         Ok(())
     }
 
@@ -396,7 +400,7 @@ pub trait RaceHandler<S: Send + Sync + ?Sized + 'static>: Send + Sized + 'static
     /// ```
     ///
     /// The default implementation checks [`should_handle`](RaceHandler::should_handle).
-    async fn should_stop(&mut self, ctx: &RaceContext<S>) -> Result<bool, Error> {
+    async fn should_stop(&mut self, ctx: &RaceContext<S>) -> Result<bool, Self::Error> {
         Ok(!Self::should_handle(&*ctx.data().await, ctx.global_state.clone()).await?)
     }
 
@@ -409,7 +413,7 @@ pub trait RaceHandler<S: Send + Sync + ?Sized + 'static>: Send + Sized + 'static
     /// ```
     ///
     /// The default implementation does nothing.
-    async fn end(self, _ctx: &RaceContext<S>) -> Result<(), Error> { Ok(()) }
+    async fn end(self, _ctx: &RaceContext<S>) -> Result<(), Self::Error> { Ok(()) }
 
     /// Called when a `chat.history` message is received.
     ///
@@ -420,7 +424,7 @@ pub trait RaceHandler<S: Send + Sync + ?Sized + 'static>: Send + Sized + 'static
     /// ```
     ///
     /// The default implementation does nothing.
-    async fn chat_history(&mut self, _ctx: &RaceContext<S>, _msgs: Vec<ChatMessage>) -> Result<(), Error> { Ok(()) }
+    async fn chat_history(&mut self, _ctx: &RaceContext<S>, _msgs: Vec<ChatMessage>) -> Result<(), Self::Error> { Ok(()) }
 
     /// Called when a `chat.message` message is received.
     ///
@@ -431,7 +435,7 @@ pub trait RaceHandler<S: Send + Sync + ?Sized + 'static>: Send + Sized + 'static
     /// ```
     ///
     /// The default implementation calls [`command`](RaceHandler::command) if appropriate.
-    async fn chat_message(&mut self, ctx: &RaceContext<S>, message: ChatMessage) -> Result<(), Error> {
+    async fn chat_message(&mut self, ctx: &RaceContext<S>, message: ChatMessage) -> Result<(), Self::Error> {
         if !message.is_bot && !message.is_system.unwrap_or(false /* Python duck typing strikes again */) && message.message.starts_with('!') {
             let data = ctx.data().await;
             let can_moderate = message.user.as_ref().map_or(false, |user| user.can_moderate);
@@ -456,7 +460,7 @@ pub trait RaceHandler<S: Send + Sync + ?Sized + 'static>: Send + Sized + 'static
     /// ```
     ///
     /// The default implementation does nothing.
-    async fn chat_dm(&mut self, _ctx: &RaceContext<S>, _message: String, _from_user: Option<DmUser>, _from_bot: Option<String>, _to: DmUser) -> Result<(), Error> { Ok(()) }
+    async fn chat_dm(&mut self, _ctx: &RaceContext<S>, _message: String, _from_user: Option<DmUser>, _from_bot: Option<String>, _to: DmUser) -> Result<(), Self::Error> { Ok(()) }
 
     /// Called when a `chat.pin` message is received.
     ///
@@ -467,7 +471,7 @@ pub trait RaceHandler<S: Send + Sync + ?Sized + 'static>: Send + Sized + 'static
     /// ```
     ///
     /// The default implementation does nothing.
-    async fn chat_pin(&mut self, _ctx: &RaceContext<S>, _message: ChatMessage) -> Result<(), Error> { Ok(()) }
+    async fn chat_pin(&mut self, _ctx: &RaceContext<S>, _message: ChatMessage) -> Result<(), Self::Error> { Ok(()) }
 
     /// Called when a `chat.unpin` message is received.
     ///
@@ -478,7 +482,7 @@ pub trait RaceHandler<S: Send + Sync + ?Sized + 'static>: Send + Sized + 'static
     /// ```
     ///
     /// The default implementation does nothing.
-    async fn chat_unpin(&mut self, _ctx: &RaceContext<S>, _message: ChatMessage) -> Result<(), Error> { Ok(()) }
+    async fn chat_unpin(&mut self, _ctx: &RaceContext<S>, _message: ChatMessage) -> Result<(), Self::Error> { Ok(()) }
 
     /// Called when a `chat.delete` message is received.
     ///
@@ -489,7 +493,7 @@ pub trait RaceHandler<S: Send + Sync + ?Sized + 'static>: Send + Sized + 'static
     /// ```
     ///
     /// The default implementation does nothing.
-    async fn chat_delete(&mut self, _ctx: &RaceContext<S>, _event: ChatDelete) -> Result<(), Error> { Ok(()) }
+    async fn chat_delete(&mut self, _ctx: &RaceContext<S>, _event: ChatDelete) -> Result<(), Self::Error> { Ok(()) }
 
     /// Called when a `chat.purge` message is received.
     ///
@@ -500,7 +504,7 @@ pub trait RaceHandler<S: Send + Sync + ?Sized + 'static>: Send + Sized + 'static
     /// ```
     ///
     /// The default implementation does nothing.
-    async fn chat_purge(&mut self, _ctx: &RaceContext<S>, _event: ChatPurge) -> Result<(), Error> { Ok(()) }
+    async fn chat_purge(&mut self, _ctx: &RaceContext<S>, _event: ChatPurge) -> Result<(), Self::Error> { Ok(()) }
 
     /// Called when an `error` message is received.
     ///
@@ -511,8 +515,8 @@ pub trait RaceHandler<S: Send + Sync + ?Sized + 'static>: Send + Sized + 'static
     /// ```
     ///
     /// The default implementation returns the errors as `Error::Server`.
-    async fn error(&mut self, _ctx: &RaceContext<S>, errors: Vec<String>) -> Result<(), Error> {
-        Err(Error::Server(errors))
+    async fn error(&mut self, _ctx: &RaceContext<S>, errors: Vec<String>) -> Result<(), Self::Error> {
+        Err(ServerErrors(errors).into())
     }
 
     /// Called when a `pong` message is received.
@@ -524,7 +528,7 @@ pub trait RaceHandler<S: Send + Sync + ?Sized + 'static>: Send + Sized + 'static
     /// ```
     ///
     /// The default implementation does nothing.
-    async fn pong(&mut self, _ctx: &RaceContext<S>) -> Result<(), Error> { Ok(()) }
+    async fn pong(&mut self, _ctx: &RaceContext<S>) -> Result<(), Self::Error> { Ok(()) }
 
     /// Called when a `race.data` message is received.
     ///
@@ -537,7 +541,7 @@ pub trait RaceHandler<S: Send + Sync + ?Sized + 'static>: Send + Sized + 'static
     /// The new race data can be found in the [`RaceContext`] parameter. The [`RaceData`] parameter contains the previous data.
     ///
     /// The default implementation does nothing.
-    async fn race_data(&mut self, _ctx: &RaceContext<S>, _old_race_data: RaceData) -> Result<(), Error> { Ok(()) }
+    async fn race_data(&mut self, _ctx: &RaceContext<S>, _old_race_data: RaceData) -> Result<(), Self::Error> { Ok(()) }
 
     /// Called when a `race.renders` message is received.
     ///
@@ -548,7 +552,7 @@ pub trait RaceHandler<S: Send + Sync + ?Sized + 'static>: Send + Sized + 'static
     /// ```
     ///
     /// The default implementation does nothing.
-    async fn race_renders(&mut self, _ctx: &RaceContext<S>) -> Result<(), Error> { Ok(()) }
+    async fn race_renders(&mut self, _ctx: &RaceContext<S>) -> Result<(), Self::Error> { Ok(()) }
 
     /// Called when a `race.split` message is received.
     ///
@@ -559,18 +563,27 @@ pub trait RaceHandler<S: Send + Sync + ?Sized + 'static>: Send + Sized + 'static
     /// ```
     ///
     /// The default implementation does nothing.
-    async fn race_split(&mut self, _ctx: &RaceContext<S>) -> Result<(), Error> { Ok(()) }
+    async fn race_split(&mut self, _ctx: &RaceContext<S>) -> Result<(), Self::Error> { Ok(()) }
 
     /// Called when a room handler task is created.
     ///
     /// Equivalent to:
     ///
     /// ```ignore
-    /// async fn task(_state: Arc<S>, _race_data: Arc<RwLock<RaceData>>, _join_handle: tokio::task::JoinHandle<()>) -> Result<(), Error>;
+    /// async fn task(_state: Arc<S>, _race_data: Arc<RwLock<RaceData>>, _join_handle: tokio::task::JoinHandle<Result<(), crate::bot::HandleError<Self::Error>>>) -> Result<(), Error>;
     /// ```
     ///
-    /// The default implementation does nothing.
-    async fn task(_state: Arc<S>, _race_data: Arc<RwLock<RaceData>>, _join_handle: tokio::task::JoinHandle<()>) -> Result<(), Error> { Ok(()) }
+    /// The default implementation spawns a wrapper task that panics if the room handler task panics or errors.
+    async fn task(_state: Arc<S>, _race_data: Arc<RwLock<RaceData>>, join_handle: tokio::task::JoinHandle<Result<(), crate::bot::HandleError<Self::Error>>>) -> Result<(), Self::Error> {
+        tokio::spawn(async move {
+            match join_handle.await {
+                Ok(Ok(())) => {}
+                Ok(Err(e)) => panic!("error in race handler: {e} ({e:?})"),
+                Err(e) => panic!("race handler task failed: {e} ({e:?})"),
+            }
+        });
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
