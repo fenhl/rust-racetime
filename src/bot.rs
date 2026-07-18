@@ -177,6 +177,7 @@ pub struct Bot<S: Send + Sync + ?Sized + 'static> {
 #[derive(Debug, thiserror::Error)]
 pub enum RunError<H> {
     #[error(transparent)] Auth(#[from] AuthError),
+    #[error(transparent)] Elapsed(#[from] Elapsed),
     #[error(transparent)] Handler(H),
     #[error(transparent)] Http(#[from] reqwest::Error),
     #[error(transparent)] InvalidHeaderValue(#[from] http::header::InvalidHeaderValue),
@@ -236,7 +237,7 @@ impl<S: Send + Sync + ?Sized + 'static> Bot<S> {
     /// Low-level handler for the race room. Loops over the websocket,
     /// calling the appropriate method for each message that comes in.
     async fn handle<H: RaceHandler<S>>(mut stream: WsStream, network_timeout: Option<UDuration>, ctx: RaceContext<S>, data: &Mutex<BotData>) -> Result<(), HandleError<H::Error>> {
-        async fn reconnect<S: Send + Sync + ?Sized, E>(last_network_error: &mut Instant, reconnect_wait_time: &mut UDuration, stream: &mut WsStream, ctx: &RaceContext<S>, data: &Mutex<BotData>, reason: &str) -> Result<(), HandleErrorKind<E>> {
+        async fn reconnect<S: Send + Sync + ?Sized, E>(last_network_error: &mut Instant, reconnect_wait_time: &mut UDuration, stream: &mut WsStream, network_timeout: Option<UDuration>, ctx: &RaceContext<S>, data: &Mutex<BotData>, reason: &str) -> Result<(), HandleErrorKind<E>> {
             let ws_conn = loop {
                 if last_network_error.elapsed() >= UDuration::from_hours(24) {
                     *reconnect_wait_time = UDuration::from_secs(1); // reset wait time after no crash for a day
@@ -252,7 +253,7 @@ impl<S: Send + Sync + ?Sized + 'static> Bot<S> {
                     http::header::HeaderName::from_static("authorization"),
                     format!("Bearer {}", data.access_token).parse::<http::header::HeaderValue>()?,
                 );
-                match tokio_tungstenite::client_async_tls(request, TcpStream::connect(data.host_info.websocket_socketaddrs()).await.map_err(HandleErrorKind::Connect)?).await {
+                match tokio_tungstenite::client_async_tls(request, maybe_timeout(network_timeout, TcpStream::connect(data.host_info.websocket_socketaddrs())).await?.map_err(HandleErrorKind::Connect)?).await {
                     Ok((ws_conn, _)) => break ws_conn,
                     Err(tungstenite::Error::Http(response)) if response.status().is_server_error() => continue,
                     Err(e) => return Err(e.into()),
@@ -300,16 +301,16 @@ impl<S: Send + Sync + ?Sized + 'static> Bot<S> {
                     }
                 }
                 Ok(Some(Ok(tungstenite::Message::Close(Some(tungstenite::protocol::CloseFrame { reason, .. }))))) if matches!(&*reason, "CloudFlare WebSocket proxy restarting" | "keepalive ping timeout") => reconnect(
-                    &mut last_network_error, &mut reconnect_wait_time, &mut stream, &ctx, data,
+                    &mut last_network_error, &mut reconnect_wait_time, &mut stream, network_timeout, &ctx, data,
                     "WebSocket connection closed by server",
                 ).await.at(HandleErrorContext::Reconnect)?,
                 Ok(Some(Ok(msg))) => return Err(HandleErrorKind::UnexpectedMessageType(msg)).at(HandleErrorContext::Recv),
                 Ok(Some(Err(tungstenite::Error::Io(e)))) if matches!(e.kind(), io::ErrorKind::ConnectionReset | io::ErrorKind::UnexpectedEof) => reconnect( //TODO other error kinds?
-                    &mut last_network_error, &mut reconnect_wait_time, &mut stream, &ctx, data,
+                    &mut last_network_error, &mut reconnect_wait_time, &mut stream, network_timeout, &ctx, data,
                     "unexpected end of file while waiting for message from server",
                 ).await.at(HandleErrorContext::Reconnect)?,
                 Ok(Some(Err(tungstenite::Error::Protocol(tungstenite::error::ProtocolError::ResetWithoutClosingHandshake)))) => reconnect(
-                    &mut last_network_error, &mut reconnect_wait_time, &mut stream, &ctx, data,
+                    &mut last_network_error, &mut reconnect_wait_time, &mut stream, network_timeout, &ctx, data,
                     "connection reset without closing handshake while waiting for message from server",
                 ).await.at(HandleErrorContext::Reconnect)?,
                 Ok(Some(Err(e))) => return Err(e).at(HandleErrorContext::Recv),
@@ -352,7 +353,7 @@ impl<S: Send + Sync + ?Sized + 'static> Bot<S> {
                 let mut request = data.host_info.websocket_uri(&race_data.websocket_bot_url)?.into_client_request()?;
                 request.headers_mut().append(http::header::HeaderName::from_static("authorization"), format!("Bearer {}", data.access_token).parse()?);
                 let (ws_conn, _) = tokio_tungstenite::client_async_tls(
-                    request, TcpStream::connect(data.host_info.websocket_socketaddrs()).await.map_err(RunError::Connect)?,
+                    request, maybe_timeout(self.network_timeout, TcpStream::connect(data.host_info.websocket_socketaddrs())).await?.map_err(RunError::Connect)?,
                 ).await?;
                 data.handled_races.insert(name.to_owned());
                 drop(data);
