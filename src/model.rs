@@ -409,9 +409,9 @@ pub enum SurveyQuestionKind {
 fn deserialize_django_uduration<'de, D: Deserializer<'de>>(deserializer: D) -> Result<UDuration, D::Error> {
     let s = String::deserialize(deserializer)?;
     if let Some((_, days, hours, minutes, seconds, ms)) = regex_captures!("^P([0-9]+)DT([0-9]+)H([0-9]+)M([0-9]+)(?:\\.([0-9]+))?S$", &s) {
-        Ok(UDuration::from_secs(days.parse::<u64>().map_err(D::Error::custom)? * 60 * 60 * 24)
-        + UDuration::from_secs(hours.parse::<u64>().map_err(D::Error::custom)? * 60 * 60)
-        + UDuration::from_secs(minutes.parse::<u64>().map_err(D::Error::custom)? * 60)
+        Ok(UDuration::from_hours(days.parse::<u64>().map_err(D::Error::custom)? * 24)
+        + UDuration::from_hours(hours.parse::<u64>().map_err(D::Error::custom)?)
+        + UDuration::from_mins(minutes.parse::<u64>().map_err(D::Error::custom)?)
         + UDuration::from_secs(seconds.parse().map_err(D::Error::custom)?)
         + UDuration::from_micros(if ms.is_empty() { 0 } else { ms.parse().map_err(D::Error::custom)? }))
     } else {
@@ -422,9 +422,9 @@ fn deserialize_django_uduration<'de, D: Deserializer<'de>>(deserializer: D) -> R
 fn deserialize_opt_django_uduration<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Option<UDuration>, D::Error> {
     if let Some(s) = Option::<String>::deserialize(deserializer)? {
         if let Some((_, days, hours, minutes, seconds, ms)) = regex_captures!("^P([0-9]+)DT([0-9]+)H([0-9]+)M([0-9]+)(?:\\.([0-9]+))?S$", &s) {
-            Ok(Some(UDuration::from_secs(days.parse::<u64>().map_err(D::Error::custom)? * 60 * 60 * 24)
-            + UDuration::from_secs(hours.parse::<u64>().map_err(D::Error::custom)? * 60 * 60)
-            + UDuration::from_secs(minutes.parse::<u64>().map_err(D::Error::custom)? * 60)
+            Ok(Some(UDuration::from_hours(days.parse::<u64>().map_err(D::Error::custom)? * 24)
+            + UDuration::from_hours(hours.parse::<u64>().map_err(D::Error::custom)?)
+            + UDuration::from_mins(minutes.parse::<u64>().map_err(D::Error::custom)?)
             + UDuration::from_secs(seconds.parse().map_err(D::Error::custom)?)
             + UDuration::from_micros(if ms.is_empty() { 0 } else { ms.parse().map_err(D::Error::custom)? })))
         } else {

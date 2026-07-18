@@ -16,6 +16,7 @@ pub struct BotBuilder<'a, 'b, 'c, S: Send + Sync + ?Sized + 'static> {
     pub(crate) state: Arc<S>,
     pub(crate) user_agent: &'static str,
     pub(crate) scan_races_every: UDuration,
+    pub(crate) network_timeout: Option<UDuration>,
 }
 
 impl<'a, 'b, 'c> BotBuilder<'a, 'b, 'c, ()> {
@@ -25,13 +26,14 @@ impl<'a, 'b, 'c> BotBuilder<'a, 'b, 'c, ()> {
             state: Arc::default(),
             user_agent: concat!("racetime-rs/", env!("CARGO_PKG_VERSION")),
             scan_races_every: UDuration::from_secs(30),
+            network_timeout: Some(UDuration::from_hours(1)),
             category_slug, client_id, client_secret,
         }
     }
 
     pub fn state<S: Send + Sync + ?Sized + 'static>(self, state: Arc<S>) -> BotBuilder<'a, 'b, 'c, S> {
-        let Self { category_slug, client_id, client_secret, host_info, state: _, user_agent, scan_races_every } = self;
-        BotBuilder { category_slug, client_id, client_secret, host_info, state, user_agent, scan_races_every }
+        let Self { category_slug, client_id, client_secret, host_info, state: _, user_agent, scan_races_every, network_timeout } = self;
+        BotBuilder { category_slug, client_id, client_secret, host_info, state, user_agent, scan_races_every, network_timeout }
     }
 }
 
@@ -49,6 +51,12 @@ impl<S: Send + Sync + ?Sized + 'static> BotBuilder<'_, '_, '_, S> {
     /// Defaults to 30 seconds.
     pub fn scan_races_every(self, scan_races_every: UDuration) -> Self {
         Self { scan_races_every, ..self }
+    }
+
+    /// Consider it an error if any network operation (HTTP request or WebSocket read/write) takes longer than this.
+    /// Defaults to 1 hour.
+    pub fn network_timeout(self, network_timeout: Option<UDuration>) -> Self {
+        Self { network_timeout, ..self }
     }
 
     pub async fn build(self) -> Result<Bot<S>, AuthError> {

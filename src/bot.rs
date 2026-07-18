@@ -5,7 +5,6 @@ use {
         fmt,
         mem,
         sync::Arc,
-        time::Duration,
     },
     futures::{
         SinkExt as _,
@@ -27,10 +26,10 @@ use {
         time::{
             Instant,
             MissedTickBehavior,
+            error::Elapsed,
             interval,
             interval_at,
             sleep,
-            timeout,
         },
     },
     tokio_tungstenite::tungstenite::{
@@ -48,6 +47,7 @@ use {
             RaceHandler,
             WsStream,
         },
+        maybe_timeout,
         model::*,
     },
 };
@@ -103,6 +103,7 @@ impl fmt::Display for HandleErrorContext {
 
 #[derive(Debug, thiserror::Error)]
 pub enum HandleErrorKind<H> {
+    #[error(transparent)] Elapsed(#[from] Elapsed),
     #[error(transparent)] Handler(H),
     #[error(transparent)] InvalidHeaderValue(#[from] http::header::InvalidHeaderValue),
     #[error(transparent)] Json(#[from] serde_json::Error),
@@ -170,6 +171,7 @@ pub struct Bot<S: Send + Sync + ?Sized + 'static> {
     extra_room_tx: mpsc::Sender<String>,
     extra_room_rx: mpsc::Receiver<String>,
     scan_races_every: UDuration,
+    network_timeout: Option<UDuration>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -201,8 +203,12 @@ impl<S: Send + Sync + ?Sized + 'static> Bot<S> {
     }
 
     pub(crate) async fn new_inner(builder: BotBuilder<'_, '_, '_, S>) -> Result<Self, AuthError> {
-        let BotBuilder { category_slug, client_id, client_secret, host_info, state, user_agent, scan_races_every } = builder;
-        let client = reqwest::Client::builder().user_agent(user_agent).build()?;
+        let BotBuilder { category_slug, client_id, client_secret, host_info, state, user_agent, scan_races_every, network_timeout } = builder;
+        let mut client = reqwest::Client::builder().user_agent(user_agent);
+        if let Some(network_timeout) = network_timeout {
+            client = client.timeout(network_timeout);
+        }
+        let client = client.build()?;
         let (access_token, reauthorize_every) = authorize_with_host(&host_info, client_id, client_secret, &client).await?;
         let (extra_room_tx, extra_room_rx) = mpsc::channel(1_024);
         Ok(Self {
@@ -214,7 +220,7 @@ impl<S: Send + Sync + ?Sized + 'static> Bot<S> {
                 client_secret: client_secret.to_owned(),
                 host_info,
             })),
-            client, state, extra_room_tx, extra_room_rx, scan_races_every,
+            client, state, extra_room_tx, extra_room_rx, scan_races_every, network_timeout,
         })
     }
 
@@ -229,10 +235,10 @@ impl<S: Send + Sync + ?Sized + 'static> Bot<S> {
 
     /// Low-level handler for the race room. Loops over the websocket,
     /// calling the appropriate method for each message that comes in.
-    async fn handle<H: RaceHandler<S>>(mut stream: WsStream, ctx: RaceContext<S>, data: &Mutex<BotData>) -> Result<(), HandleError<H::Error>> {
+    async fn handle<H: RaceHandler<S>>(mut stream: WsStream, network_timeout: Option<UDuration>, ctx: RaceContext<S>, data: &Mutex<BotData>) -> Result<(), HandleError<H::Error>> {
         async fn reconnect<S: Send + Sync + ?Sized, E>(last_network_error: &mut Instant, reconnect_wait_time: &mut UDuration, stream: &mut WsStream, ctx: &RaceContext<S>, data: &Mutex<BotData>, reason: &str) -> Result<(), HandleErrorKind<E>> {
             let ws_conn = loop {
-                if last_network_error.elapsed() >= UDuration::from_secs(60 * 60 * 24) {
+                if last_network_error.elapsed() >= UDuration::from_hours(24) {
                     *reconnect_wait_time = UDuration::from_secs(1); // reset wait time after no crash for a day
                 } else {
                     *reconnect_wait_time *= 2; // exponential backoff
@@ -260,7 +266,7 @@ impl<S: Send + Sync + ?Sized + 'static> Bot<S> {
         let mut reconnect_wait_time = UDuration::from_secs(1);
         let mut handler = H::new(&ctx).await.h_at(HandleErrorContext::New)?;
         loop {
-            match timeout(Duration::from_secs(60 * 60), stream.next()).await {
+            match maybe_timeout(network_timeout, stream.next()).await {
                 Ok(Some(Ok(tungstenite::Message::Text(buf)))) => {
                     match serde_json::from_str(&buf).at(HandleErrorContext::Decode)? {
                         Message::ChatHistory { messages } => handler.chat_history(&ctx, messages).await.h_at(HandleErrorContext::ChatHistory)?,
@@ -287,7 +293,7 @@ impl<S: Send + Sync + ?Sized + 'static> Bot<S> {
                     }
                 }
                 Ok(Some(Ok(tungstenite::Message::Ping(payload)))) => {
-                    ctx.sender.lock().await.send(tungstenite::Message::Pong(payload)).await.at(HandleErrorContext::Ping)?;
+                    maybe_timeout(network_timeout, ctx.sender.lock().await.send(tungstenite::Message::Pong(payload))).await.at(HandleErrorContext::Ping)?.at(HandleErrorContext::Ping)?;
                     // chat stops working 1 hour after race ends, allow the handler to stop then by periodically rechecking should_stop
                     if handler.should_stop(&ctx).await.h_at(HandleErrorContext::ShouldStop)? {
                         return handler.end(&ctx).await.h_at(HandleErrorContext::End)
@@ -308,7 +314,7 @@ impl<S: Send + Sync + ?Sized + 'static> Bot<S> {
                 ).await.at(HandleErrorContext::Reconnect)?,
                 Ok(Some(Err(e))) => return Err(e).at(HandleErrorContext::Recv),
                 Ok(None) => return Err(HandleErrorKind::EndOfStream).at(HandleErrorContext::Recv),
-                Err(tokio::time::error::Elapsed { .. }) => {
+                Err(Elapsed { .. }) => {
                     // chat stops working 1 hour after race ends, allow the handler to stop then by periodically rechecking should_stop
                     if handler.should_stop(&ctx).await.h_at(HandleErrorContext::ShouldStop)? {
                         return handler.end(&ctx).await.h_at(HandleErrorContext::End)
@@ -351,16 +357,18 @@ impl<S: Send + Sync + ?Sized + 'static> Bot<S> {
                 data.handled_races.insert(name.to_owned());
                 drop(data);
                 let (sink, stream) = ws_conn.split();
+                let network_timeout = self.network_timeout;
                 let race_data = Arc::new(RwLock::new(race_data));
                 let ctx = RaceContext {
                     global_state: Arc::clone(&self.state),
                     data: Arc::clone(&race_data),
                     sender: Arc::new(Mutex::new(sink)),
+                    network_timeout,
                 };
                 let name = name.to_owned();
                 let data_clone = Arc::clone(&self.data);
                 H::task(Arc::clone(&self.state), race_data, tokio::spawn(async move {
-                    Self::handle::<H>(stream, ctx, &data_clone).await?;
+                    Self::handle::<H>(stream, network_timeout, ctx, &data_clone).await?;
                     data_clone.lock().await.handled_races.remove(&name);
                     Ok(())
                 })).await.map_err(RunError::Handler)?;

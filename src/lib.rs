@@ -16,9 +16,19 @@ use {
         num::NonZeroU16,
     },
     collect_mac::collect,
+    futures::future::{
+        Either,
+        FutureExt as _,
+    },
     lazy_regex::regex_captures,
     serde::Deserialize,
-    tokio::net::ToSocketAddrs,
+    tokio::{
+        net::ToSocketAddrs,
+        time::{
+            error::Elapsed,
+            timeout,
+        },
+    },
     url::Url,
 };
 pub use crate::{
@@ -36,6 +46,14 @@ const RACETIME_HOST: &str = "racetime.gg";
 
 /// An unsigned duration. This is a reexport of [`std::time::Duration`].
 pub type UDuration = std::time::Duration;
+
+fn maybe_timeout<T>(duration: Option<UDuration>, fut: impl Future<Output = T>) -> impl Future<Output = Result<T, Elapsed>> {
+    if let Some(duration) = duration {
+        Either::Left(timeout(duration, fut))
+    } else {
+        Either::Right(fut.map(Ok))
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct HostInfo {

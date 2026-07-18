@@ -36,7 +36,11 @@ use {
         },
     },
     uuid::Uuid,
-    crate::model::*,
+    crate::{
+        UDuration,
+        maybe_timeout,
+        model::*,
+    },
 };
 
 pub type WsStream = SplitStream<WebSocketStream<MaybeTlsStream<TcpStream>>>;
@@ -51,10 +55,12 @@ pub struct RaceContext<S: Send + Sync + ?Sized + 'static> {
     pub global_state: Arc<S>,
     pub(crate) data: Arc<RwLock<RaceData>>,
     pub(crate) sender: Arc<Mutex<WsSink>>,
+    pub(crate) network_timeout: Option<UDuration>,
 }
 
 #[derive(Debug, thiserror::Error)]
 pub enum SendError {
+    #[error(transparent)] Elapsed(#[from] tokio::time::error::Elapsed),
     #[error(transparent)] Serialize(#[from] serde_json::Error),
     #[error(transparent)] WebSocket(#[from] tungstenite::Error),
 }
@@ -74,18 +80,18 @@ impl<S: Send + Sync + ?Sized + 'static> RaceContext<S> {
             data: T,
         }
 
-        self.sender.lock().await.send(tungstenite::Message::Text(serde_json::to_string(&RawMessage { action, data })?.into())).await?;
+        maybe_timeout(self.network_timeout, self.sender.lock().await.send(tungstenite::Message::Text(serde_json::to_string(&RawMessage { action, data })?.into()))).await??;
         Ok(())
     }
 
     /// Request the race information. Implement [`RaceHandler::race_data`] to handle the response.
-    pub async fn get_race(&self) -> tungstenite::Result<()> {
-        self.sender.lock().await.send(tungstenite::Message::Text(Utf8Bytes::from_static("{\"action\":\"getrace\"}"))).await
+    pub async fn get_race(&self) -> Result<(), SendError> {
+        Ok(maybe_timeout(self.network_timeout, self.sender.lock().await.send(tungstenite::Message::Text(Utf8Bytes::from_static("{\"action\":\"getrace\"}")))).await??)
     }
 
     /// Request recent chat history. Implement [`RaceHandler::chat_history`] to handle the response.
-    pub async fn get_history(&self) -> tungstenite::Result<()> {
-        self.sender.lock().await.send(tungstenite::Message::Text(Utf8Bytes::from_static("{\"action\":\"gethistory\"}"))).await
+    pub async fn get_history(&self) -> Result<(), SendError> {
+        Ok(maybe_timeout(self.network_timeout, self.sender.lock().await.send(tungstenite::Message::Text(Utf8Bytes::from_static("{\"action\":\"gethistory\"}")))).await??)
     }
 
     /// Send a simple chat message to the race room.
@@ -218,23 +224,23 @@ impl<S: Send + Sync + ?Sized + 'static> RaceContext<S> {
     }
 
     /// Set the room in an open state.
-    pub async fn set_open(&self) -> tungstenite::Result<()> {
-        self.sender.lock().await.send(tungstenite::Message::Text(Utf8Bytes::from_static("{\"action\":\"make_open\"}"))).await
+    pub async fn set_open(&self) -> Result<(), SendError> {
+        Ok(maybe_timeout(self.network_timeout, self.sender.lock().await.send(tungstenite::Message::Text(Utf8Bytes::from_static("{\"action\":\"make_open\"}")))).await??)
     }
 
     /// Set the room in an invite-only state.
-    pub async fn set_invitational(&self) -> tungstenite::Result<()> {
-        self.sender.lock().await.send(tungstenite::Message::Text(Utf8Bytes::from_static("{\"action\":\"make_invitational\"}"))).await
+    pub async fn set_invitational(&self) -> Result<(), SendError> {
+        Ok(maybe_timeout(self.network_timeout, self.sender.lock().await.send(tungstenite::Message::Text(Utf8Bytes::from_static("{\"action\":\"make_invitational\"}")))).await??)
     }
 
     /// Forces a start of the race.
-    pub async fn force_start(&self) -> tungstenite::Result<()> {
-        self.sender.lock().await.send(tungstenite::Message::Text(Utf8Bytes::from_static("{\"action\":\"begin\"}"))).await
+    pub async fn force_start(&self) -> Result<(), SendError> {
+        Ok(maybe_timeout(self.network_timeout, self.sender.lock().await.send(tungstenite::Message::Text(Utf8Bytes::from_static("{\"action\":\"begin\"}")))).await??)
     }
 
     /// Forcibly cancels a race.
-    pub async fn cancel_race(&self) -> tungstenite::Result<()> {
-        self.sender.lock().await.send(tungstenite::Message::Text(Utf8Bytes::from_static("{\"action\":\"cancel\"}"))).await
+    pub async fn cancel_race(&self) -> Result<(), SendError> {
+        Ok(maybe_timeout(self.network_timeout, self.sender.lock().await.send(tungstenite::Message::Text(Utf8Bytes::from_static("{\"action\":\"cancel\"}")))).await??)
     }
 
     /// Invites a user to the race.
@@ -343,6 +349,7 @@ impl<S: Send + Sync + ?Sized + 'static> Clone for RaceContext<S> {
             global_state: Arc::clone(&self.global_state),
             data: Arc::clone(&self.data),
             sender: Arc::clone(&self.sender),
+            network_timeout: self.network_timeout,
         }
     }
 }
