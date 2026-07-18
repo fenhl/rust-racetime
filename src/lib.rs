@@ -3,6 +3,11 @@
 //! The main entry point is [`Bot::run`]. You can also create new race rooms using [`StartRace::start`].
 //!
 //! For documentation, see also <https://github.com/racetimeGG/racetime-app/wiki/Category-bots>.
+//!
+//! # MSRV policy
+//!
+//! This library is kept compatible with [the version of Rust packaged in the latest stable release of Nixpkgs](https://search.nixos.org/packages?query=cargo).
+//! MSRV bumps that follow this policy are not considered breaking changes.
 
 use {
     std::{
