@@ -357,10 +357,9 @@ impl<S: Send + Sync + ?Sized + 'static> Bot<S> {
                         match maybe_timeout(network_timeout, ctx.sender.lock().await.send(tungstenite::Message::Ping(Default::default()))).await {
                             Ok(Ok(())) => waiting_for_probe_response = true,
                             Ok(Err(e)) => {
-                                let reason = format!("failed to send WebSocket liveness probe: {e}");
                                 reconnect(
                                     &mut last_network_error, &mut reconnect_wait_time, &mut stream, network_timeout, &ctx, data,
-                                    &reason,
+                                    &format!("failed to send WebSocket liveness probe: {e}"),
                                 ).await.at(HandleErrorContext::Reconnect)?;
                                 waiting_for_probe_response = false;
                             }
@@ -582,12 +581,12 @@ mod tests {
                     "short_name": "Test",
                     "slug": "test",
                     "url": "/test",
-                    "data_url": "/test/data"
+                    "data_url": "/test/data",
                 },
                 "status": {
                     "value": status,
                     "verbose_value": status,
-                    "help_text": ""
+                    "help_text": "",
                 },
                 "url": "/test/test-room",
                 "data_url": "/test/test-room/data",
@@ -596,11 +595,11 @@ mod tests {
                 "websocket_oauth_url": "/ws",
                 "goal": {
                     "name": "Test",
-                    "custom": false
+                    "custom": false,
                 },
                 "info": "",
                 "info_bot": null,
-                "info_user": null
+                "info_user": null,
             }),
             serde_json::json!({
                 "entrants_count": 0,
@@ -617,7 +616,7 @@ mod tests {
                 "time_limit": "P0DT24H0M0S",
                 "time_limit_auto_complete": false,
                 "require_even_teams": false,
-                "streaming_required": false
+                "streaming_required": false,
             }),
             serde_json::json!({
                 "auto_start": false,
@@ -634,7 +633,7 @@ mod tests {
                 "allow_midrace_chat": true,
                 "allow_non_entrant_chat": true,
                 "chat_message_delay": "P0DT0H0M0S",
-                "bot_meta": {}
+                "bot_meta": {},
             }),
         ] {
             let serde_json::Value::Object(part) = part else { unreachable!() };
@@ -763,7 +762,7 @@ mod tests {
             let mut server_stream = accept_async(tcp_stream).await.expect("failed to accept reconnected WebSocket");
             let message = serde_json::json!({
                 "type": "race.data",
-                "race": race_data_json("finished")
+                "race": race_data_json("finished"),
             });
             server_stream.send(tungstenite::Message::Text(message.to_string().into())).await.expect("failed to send fresh race data");
         });
