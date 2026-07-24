@@ -53,7 +53,10 @@ impl<S: Send + Sync + ?Sized + 'static> BotBuilder<'_, '_, '_, S> {
         Self { scan_races_every, ..self }
     }
 
-    /// Consider it an error if any network operation (HTTP request or WebSocket read/write) takes longer than this.
+    /// Consider it an error if any network operation (HTTP request or WebSocket write) takes longer than this.
+    ///
+    /// After a WebSocket read is silent for this long, the bot sends one liveness probe. If the connection remains silent
+    /// for another interval, it reconnects. No probes are sent while the server's normal keepalive messages are arriving.
     /// Defaults to 1 hour.
     pub fn network_timeout(self, network_timeout: Option<UDuration>) -> Self {
         Self { network_timeout, ..self }
