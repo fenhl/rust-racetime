@@ -1,6 +1,9 @@
 use {
     std::{
-        collections::HashSet,
+        collections::{
+            HashMap,
+            HashSet,
+        },
         convert::Infallible as Never,
         fmt,
         mem,
@@ -444,6 +447,7 @@ impl<S: Send + Sync + ?Sized + 'static> Bot<S> {
         let mut reauthorize = interval_at(Instant::now() + reauthorize_every, reauthorize_every);
         let mut refresh_races = interval(self.scan_races_every);
         refresh_races.set_missed_tick_behavior(MissedTickBehavior::Delay);
+        let mut extra_rooms_to_retry = HashMap::<String, String>::default();
         loop {
             tokio::select! {
                 output = &mut shutdown => return Ok(output), //TODO shut down running handlers
@@ -492,7 +496,27 @@ impl<S: Send + Sync + ?Sized + 'static> Bot<S> {
                         }
                     };
                     for summary_data in data.current_races {
-                        self.maybe_handle_race::<H>(&summary_data.name, &summary_data.data_url).await?;
+                        match self.maybe_handle_race::<H>(&summary_data.name, &summary_data.data_url).await {
+                            Ok(()) => {
+                                extra_rooms_to_retry.remove(&summary_data.name);
+                            }
+                            Err(RunError::Elapsed(e)) => {
+                                eprintln!("failed to handle race {} (retrying in {} seconds): {e:?}", summary_data.name, self.scan_races_every.as_secs_f64());
+                            }
+                            Err(e) => return Err(e),
+                        }
+                    }
+                    for (name, data_url) in mem::take(&mut extra_rooms_to_retry) {
+                        match self.maybe_handle_race::<H>(&name, &data_url).await {
+                            Ok(()) => {
+                                extra_rooms_to_retry.remove(&name);
+                            }
+                            Err(RunError::Elapsed(e)) => {
+                                eprintln!("failed to handle race {name} (retrying in {} seconds): {e:?}", self.scan_races_every.as_secs_f64());
+                                extra_rooms_to_retry.insert(name, data_url);
+                            }
+                            Err(e) => return Err(e),
+                        }
                     }
                 }
                 Some(slug) = self.extra_room_rx.recv() => {
@@ -500,7 +524,16 @@ impl<S: Send + Sync + ?Sized + 'static> Bot<S> {
                         let data = self.data.lock().await;
                         (format!("{}/{}", data.category_slug, slug), format!("/{}/{}/data", data.category_slug, slug))
                     };
-                    self.maybe_handle_race::<H>(&name, &data_url).await?;
+                    match self.maybe_handle_race::<H>(&name, &data_url).await {
+                        Ok(()) => {
+                            extra_rooms_to_retry.remove(&name);
+                        }
+                        Err(RunError::Elapsed(e)) => {
+                            eprintln!("failed to handle race {name} (retrying on next race scan): {e:?}");
+                            extra_rooms_to_retry.insert(name, data_url);
+                        }
+                        Err(e) => return Err(e),
+                    }
                 }
             }
         }
