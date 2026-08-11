@@ -404,9 +404,10 @@ impl<S: Send + Sync + ?Sized + 'static> Bot<S> {
             if H::should_handle(&race_data, Arc::clone(&self.state)).await.map_err(RunError::Handler)? {
                 let mut request = data.host_info.websocket_uri(&race_data.websocket_bot_url)?.into_client_request()?;
                 request.headers_mut().append(http::header::HeaderName::from_static("authorization"), format!("Bearer {}", data.access_token).parse()?);
-                let (ws_conn, _) = tokio_tungstenite::client_async_tls(
-                    request, maybe_timeout(self.network_timeout, TcpStream::connect(data.host_info.websocket_socketaddrs())).await?.map_err(RunError::Connect)?,
-                ).await?;
+                let (ws_conn, _) = maybe_timeout(self.network_timeout, async {
+                    let tcp_stream = TcpStream::connect(data.host_info.websocket_socketaddrs()).await.map_err(RunError::Connect)?;
+                    Ok::<_, RunError<H::Error>>(tokio_tungstenite::client_async_tls(request, tcp_stream).await?)
+                }).await??;
                 data.handled_races.insert(name.to_owned());
                 drop(data);
                 let (sink, stream) = ws_conn.split();
